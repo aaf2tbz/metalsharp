@@ -22,7 +22,7 @@ static MetalsharpResponse* sok(const char* j) {
 }
 __attribute__((unused)) static MetalsharpResponse* h_ok(const HttpRequest* req) {
     (void)req;
-    return sok("{\"ok\":true}");
+    return sok("{\"ok\":false,\"error\":\"id or family required\"}");
 }
 __attribute__((unused)) __attribute__((unused)) static MetalsharpResponse* h_ok_error(const HttpRequest* req) {
     (void)req;

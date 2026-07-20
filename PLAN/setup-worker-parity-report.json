@@ -1,0 +1,25 @@
+{
+  "oracle": "app/build/c-backend-legacy/metalsharp-backend",
+  "candidate": "app/build/c-backend/metalsharp-backend",
+  "fixture": "complete local bundle install with downloaded split assets/scripts/Steam bundles",
+  "oracleFinalProgress": {
+    "current": "Complete",
+    "error": null,
+    "log": "All assets installed!",
+    "status": "complete",
+    "step": 15,
+    "total": 15
+  },
+  "candidateFinalProgress": {
+    "current": "Complete",
+    "error": null,
+    "log": "All assets installed!",
+    "status": "complete",
+    "step": 15,
+    "total": 15
+  },
+  "normalizedFilesystemEntries": 13446,
+  "normalizedFilesystemMatch": true,
+  "candidateIdempotentRerunFilesystemMatch": true,
+  "notes": "Filesystem comparison normalizes isolated-home paths, timestamps, generated Python/Git cache bytes, and other process-specific values using tools/contracts/diff-electron-backends.py."
+}

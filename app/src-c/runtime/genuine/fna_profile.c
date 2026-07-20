@@ -63,6 +63,7 @@
  */
 
 #include "database.h"
+#include "diagnostics_empty_state.h"
 #include "http_server.h"
 #include "json.h"
 #include "logger.h"
@@ -108,6 +109,7 @@ static MetalsharpResponse* make_data_response(const char* body) {
     }
     r->ok = true;
     r->data = val;
+    r->data_kind = METALSHARP_RESPONSE_JSON_VALUE;
     return r;
 }
 
@@ -121,8 +123,7 @@ static MetalsharpResponse* make_data_response(const char* body) {
  */
 static MetalsharpResponse* handle_fna_classify(const HttpRequest* req) {
     (void)req;
-    return make_data_response("{\"ok\":true,\"signals\":[],"
-                              "\"classification\":\"unknown\"}");
+    return make_data_response(DIAG_DIAGNOSTICS_FNA_CLASSIFY_JSON);
 }
 
 /*
@@ -133,9 +134,7 @@ static MetalsharpResponse* handle_fna_classify(const HttpRequest* req) {
  */
 static MetalsharpResponse* handle_fna_explain(const HttpRequest* req) {
     (void)req;
-    return make_data_response("{\"ok\":true,\"signals\":[],"
-                              "\"classification\":\"unknown\","
-                              "\"reason\":\"no signals collected\"}");
+    return make_data_response(DIAG_DIAGNOSTICS_FNA_EXPLAIN_JSON);
 }
 
 /*
@@ -147,7 +146,10 @@ static MetalsharpResponse* handle_fna_explain(const HttpRequest* req) {
  */
 static MetalsharpResponse* handle_fna_signals(const HttpRequest* req) {
     (void)req;
-    return make_data_response("{\"ok\":true,\"signals\":[]}");
+    MetalsharpResponse* response = make_data_response(DIAG_DIAGNOSTICS_FNA_SIGNALS_JSON);
+    if (response != NULL)
+        response->http_status = 400;
+    return response;
 }
 
 /* ── Route registration ── */

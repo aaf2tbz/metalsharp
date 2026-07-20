@@ -22,7 +22,10 @@ static MetalsharpResponse* sok(const char* j) {
 }
 __attribute__((unused)) static MetalsharpResponse* h_ok(const HttpRequest* req) {
     (void)req;
-    return sok("{\"ok\":true}");
+    return sok("{\"ok\":true,\"schema_version\":1,\"encoder_boundaries\":[],\"violations\":[],"
+               "\"visibility_summary\":{\"total_transitions\":0,\"render_passes\":0,"
+               "\"split_barriers\":0,\"unfinished_split_barriers\":0,"
+               "\"read_to_write_transitions\":0,\"write_to_read_transitions\":0}}");
 }
 __attribute__((unused)) __attribute__((unused)) static MetalsharpResponse* h_ok_error(const HttpRequest* req) {
     (void)req;

@@ -59,6 +59,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "http_server.h"
+#include "kt_empty_compat.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -285,15 +286,6 @@ static char* serialize_response(const MetalsharpResponse* resp) {
         return strdup("{\"ok\":false,\"error\":\"internal error\"}");
     }
 
-    /* If data is already a complete JSON object string, return it directly
-     * (the route handler is responsible for producing the full response).
-     * Otherwise build the envelope from ok/error_msg/data fields. */
-    const char* raw = (const char*)resp->data;
-    if (raw != NULL && raw[0] == '{') {
-        return strdup(raw);
-    }
-
-    /* Legacy envelope: build {"ok":...,"error":"..."} from struct fields. */
     const char* msg = resp->error_msg ? resp->error_msg : "error";
     if (!resp->ok) {
         char* esc_err = json_escape(msg);
@@ -307,30 +299,11 @@ static char* serialize_response(const MetalsharpResponse* resp) {
         return out;
     }
 
-    /* Serialize JsonValue data if present. */
-    char* data_json = NULL;
-    if (resp->data && raw[0] != '{') {
-        data_json = json_serialize((const JsonValue*)resp->data);
-    }
-
-    size_t total = 32;
-    if (data_json)
-        total += strlen(data_json) + 16;
-
-    char* out = malloc(total);
-    if (!out) {
-        free(data_json);
-        return NULL;
-    }
-
-    if (data_json) {
-        snprintf(out, total, "{\"ok\":true,\"data\":%s}", data_json);
-        free(data_json);
-        return out;
-    }
-
-    free(out);
-    return strdup("{\"ok\":true}");
+    if (resp->data == NULL)
+        return strdup("{\"ok\":true}");
+    if (resp->data_kind == METALSHARP_RESPONSE_JSON_VALUE)
+        return json_serialize((const JsonValue*)resp->data);
+    return strdup((const char*)resp->data);
 }
 
 /*
@@ -362,15 +335,16 @@ static bool send_all(int fd, const void* buf, size_t len) {
  * is its textual reason phrase; body is the JSON body (may be
  * empty). The Content-Length is computed from strlen(body).
  */
-static bool write_http_response(int fd, int status, const char* reason, const char* body) {
-    size_t body_len = body ? strlen(body) : 0;
+static bool write_http_response(int fd, int status, const char* reason, const void* body, size_t body_len,
+                                const char* content_type) {
     char header[512];
     int n = snprintf(header, sizeof(header),
                      "HTTP/1.1 %d %s\r\n"
-                     "Content-Type: application/json\r\n"
+                     "Content-Type: %s\r\n"
                      "Content-Length: %zu\r\n"
+                     "Connection: close\r\n"
                      "\r\n",
-                     status, reason, body_len);
+                     status, reason, content_type != NULL ? content_type : "application/json", body_len);
     if (n < 0 || (size_t)n >= sizeof(header))
         return false;
     if (!send_all(fd, header, (size_t)n))
@@ -386,7 +360,7 @@ static bool write_http_response(int fd, int status, const char* reason, const ch
  */
 static void send_not_found(int fd) {
     static const char body[] = "{\"ok\":false,\"error\":\"not found\"}";
-    write_http_response(fd, 404, "Not Found", body);
+    write_http_response(fd, 404, "Not Found", body, strlen(body), "application/json");
 }
 
 /*
@@ -404,7 +378,7 @@ static void send_bad_request(int fd, const char* msg) {
         return;
     }
     snprintf(body, cap, "{\"ok\":false,\"error\":\"%s\"}", escaped);
-    write_http_response(fd, 400, "Bad Request", body);
+    write_http_response(fd, 400, "Bad Request", body, strlen(body), "application/json");
     free(body);
     free(escaped);
 }
@@ -414,7 +388,7 @@ static void send_bad_request(int fd, const char* msg) {
  */
 static void send_internal_error(int fd) {
     static const char body[] = "{\"ok\":false,\"error\":\"internal error\"}";
-    write_http_response(fd, 500, "Internal Server Error", body);
+    write_http_response(fd, 500, "Internal Server Error", body, strlen(body), "application/json");
 }
 
 /*
@@ -676,19 +650,37 @@ static void serve_connection(HttpServer* s, int fd) {
     if (!handler) {
         send_not_found(fd);
     } else {
-        MetalsharpResponse* resp = handler(&req);
+        MetalsharpResponse* resp = kt_empty_compat_response(&req);
+        if (resp == NULL)
+            resp = handler(&req);
         if (!resp) {
             send_internal_error(fd);
         } else {
-            char* json = serialize_response(resp);
-            if (!json) {
-                send_internal_error(fd);
+            int status = resp->http_status > 0 ? resp->http_status : 200;
+            const char* reason = status == 400   ? "Bad Request"
+                                 : status == 404 ? "Not Found"
+                                 : status == 409 ? "Conflict"
+                                 : status == 500 ? "Internal Server Error"
+                                                 : "OK";
+            if (resp->data_kind == METALSHARP_RESPONSE_RAW && resp->ok) {
+                write_http_response(fd, status, reason, resp->data, resp->data_length,
+                                    resp->content_type != NULL ? resp->content_type : "application/octet-stream");
             } else {
-                write_http_response(fd, 200, "OK", json);
-                free(json);
+                char* json = serialize_response(resp);
+                if (!json)
+                    send_internal_error(fd);
+                else {
+                    write_http_response(fd, status, reason, json, strlen(json), "application/json");
+                    free(json);
+                }
             }
+            free(resp->content_type);
             if (resp->error_msg)
                 free(resp->error_msg);
+            if (resp->data_kind == METALSHARP_RESPONSE_JSON_VALUE)
+                json_free((JsonValue*)resp->data);
+            else
+                free(resp->data);
             free(resp);
         }
     }
@@ -851,6 +843,15 @@ void http_server_register(HttpServer* server, const char* method, const char* pa
     }
 
     pthread_mutex_lock(&server->routes_lock);
+    for (size_t i = 0; i < server->route_count; i++) {
+        if (strcmp(server->routes[i].method, method) == 0 && strcmp(server->routes[i].path, path) == 0) {
+            server->routes[i].handler = handler;
+            pthread_mutex_unlock(&server->routes_lock);
+            free(mcopy);
+            free(pcopy);
+            return;
+        }
+    }
     if (server->route_count == server->route_capacity) {
         size_t newcap = server->route_capacity * 2;
         Route* grown = (Route*)realloc(server->routes, newcap * sizeof(Route));
@@ -870,15 +871,16 @@ void http_server_register(HttpServer* server, const char* method, const char* pa
     pthread_mutex_unlock(&server->routes_lock);
 }
 
+extern int metalsharp_shutdown_requested(void);
+
 void http_server_run(HttpServer* server) {
     if (!server)
         return;
     for (;;) {
-        int client_fd;
-        do {
-            client_fd = accept(server->listen_fd, NULL, NULL);
-        } while (client_fd < 0 && errno == EINTR);
-        if (client_fd < 0)
+        int client_fd = accept(server->listen_fd, NULL, NULL);
+        if (client_fd < 0 && errno == EINTR && !metalsharp_shutdown_requested())
+            continue;
+        if (client_fd < 0 || metalsharp_shutdown_requested())
             break;
         queue_push(server, client_fd);
     }

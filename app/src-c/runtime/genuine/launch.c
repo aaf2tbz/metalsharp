@@ -99,6 +99,8 @@
  *   config_parse_rules already performs during initial load.
  */
 
+#include "launch.h"
+#include "compat_log.h"
 #include "config_parser.h"
 #include "database.h"
 #include "http_server.h"
@@ -108,12 +110,26 @@
 
 #include "launcher.h"
 
+#include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 /* ── Constants ── */
 
@@ -191,6 +207,7 @@ static MtspRules* g_launch_rules = NULL;
 /* Route handlers. Each receives the parsed HTTP request and
  * returns a heap-allocated MetalsharpResponse that the HTTP
  * layer serialises to JSON, sends back to the client, and frees. */
+static MetalsharpResponse* handle_launch(const HttpRequest* req);
 static MetalsharpResponse* handle_game_launch_auto(const HttpRequest* req);
 static MetalsharpResponse* handle_game_prepare(const HttpRequest* req);
 static MetalsharpResponse* handle_game_resolve_routing(const HttpRequest* req);
@@ -228,6 +245,7 @@ static MetalsharpResponse* make_data_response(const char* body) {
     }
     r->ok = true;
     r->data = val;
+    r->data_kind = METALSHARP_RESPONSE_JSON_VALUE;
     return r;
 }
 
@@ -356,6 +374,7 @@ static void jsonbuf_append_escaped(jsonbuf_t* b, const char* s) {
         jsonbuf_append(b, "null");
         return;
     }
+    jsonbuf_append(b, "\"");
     char esc[LAUNCH_ESCAPE_MAX];
     size_t i = 0u;
     for (const unsigned char* p = (const unsigned char*)s; *p != '\0'; p++) {
@@ -412,6 +431,7 @@ static void jsonbuf_append_escaped(jsonbuf_t* b, const char* s) {
         esc[i] = '\0';
         jsonbuf_append(b, esc);
     }
+    jsonbuf_append(b, "\"");
 }
 
 /*
@@ -450,26 +470,44 @@ static void jsonbuf_append_env_pair(jsonbuf_t* b, const char* key, const char* v
  * handlers can fall back to the maintained-C launch policy.
  */
 static void launch_load_rules(void) {
+    char home_path[PATH_MAX] = "", resource_path[PATH_MAX] = "";
     const char* home = getenv("METALSHARP_HOME");
-    if (home == NULL || home[0] == '\0') {
-        LOG_WARN("launch: METALSHARP_HOME unset; per-title rules disabled");
-        return;
+    if (home == NULL || home[0] == '\0')
+        home = getenv("HOME");
+    if (home != NULL)
+        (void)snprintf(home_path, sizeof(home_path), LAUNCH_RULES_PATH_TEMPLATE, home);
+#ifdef __APPLE__
+    uint32_t executable_size = PATH_MAX;
+    char executable[PATH_MAX];
+    if (_NSGetExecutablePath(executable, &executable_size) == 0) {
+        char* slash = strrchr(executable, '/');
+        if (slash != NULL) {
+            *slash = '\0';
+            (void)snprintf(resource_path, sizeof(resource_path), "%s/../configs/mtsp-rules.toml", executable);
+        }
     }
-    char path[PATH_MAX];
-    int written = snprintf(path, sizeof(path), LAUNCH_RULES_PATH_TEMPLATE, home);
-    if (written < 0 || (size_t)written >= sizeof(path)) {
-        LOG_WARN("launch: rules path too long under %s", home);
-        return;
+#endif
+    const char* candidates[] = {home_path, resource_path, "configs/mtsp-rules.toml", "../configs/mtsp-rules.toml",
+                                "../../configs/mtsp-rules.toml"};
+    char* last_error = NULL;
+    const char* last_path = home_path;
+    for (size_t i = 0u; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        if (candidates[i][0] == '\0')
+            continue;
+        char* error = NULL;
+        MtspRules* rules = config_parse_rules(candidates[i], &error);
+        if (rules != NULL) {
+            free(last_error);
+            g_launch_rules = rules;
+            LOG_INFO("launch: loaded mtsp-rules from %s", candidates[i]);
+            return;
+        }
+        free(last_error);
+        last_error = error;
+        last_path = candidates[i];
     }
-    char* err = NULL;
-    MtspRules* rules = config_parse_rules(path, &err);
-    if (rules == NULL) {
-        LOG_WARN("launch: cannot load rules from %s: %s", path, err != NULL ? err : "(unknown)");
-        free(err);
-        return;
-    }
-    g_launch_rules = rules;
-    LOG_INFO("launch: loaded mtsp-rules from %s", path);
+    LOG_WARN("launch: cannot load rules from %s: %s", last_path, last_error != NULL ? last_error : "(unknown)");
+    free(last_error);
 }
 
 /* ── Pipeline resolution ── */
@@ -539,9 +577,11 @@ static void jsonbuf_append_policy_env(jsonbuf_t* b, const MetalsharpLaunchPolicy
  * fills `error_msg` with a heap-allocated, NUL-terminated
  * diagnostic the caller must release with free().
  */
-static bool parse_launch_body(const char* body, size_t body_len, const char** pipeline_out, unsigned int* appid_out,
-                              char** error_msg) {
-    *pipeline_out = LAUNCH_DEFAULT_PIPELINE;
+static bool parse_launch_body(const char* body, size_t body_len, char* pipeline_out, size_t pipeline_size,
+                              unsigned int* appid_out, char** error_msg) {
+    if (pipeline_out == NULL || pipeline_size == 0u || appid_out == NULL || error_msg == NULL)
+        return false;
+    snprintf(pipeline_out, pipeline_size, "%s", LAUNCH_DEFAULT_PIPELINE);
     *appid_out = 0u;
     if (body == NULL || body_len == 0u) {
         *error_msg = strdup("launch-auto: missing appid");
@@ -576,14 +616,424 @@ static bool parse_launch_body(const char* body, size_t body_len, const char** pi
     if (pipe_node != NULL && json_type(pipe_node) == JSON_STRING) {
         const char* s = json_get_string(pipe_node);
         if (s != NULL && s[0] != '\0') {
-            *pipeline_out = s;
+            int written = snprintf(pipeline_out, pipeline_size, "%s", s);
+            if (written < 0 || (size_t)written >= pipeline_size) {
+                json_free(root);
+                *error_msg = strdup("launch-auto: pipeline too long");
+                return false;
+            }
         }
     }
     json_free(root);
     return true;
 }
 
-/* ── /game/launch-auto and /launch ── */
+/* ── Legacy /launch process handoff ── */
+
+static bool launch_join_path(char* output, size_t output_size, const char* left, const char* right) {
+    if (output == NULL || output_size == 0u || left == NULL || right == NULL)
+        return false;
+    int written = snprintf(output, output_size, "%s%s%s", left,
+                           left[0] != '\0' && left[strlen(left) - 1u] == '/' ? "" : "/", right);
+    return written >= 0 && (size_t)written < output_size;
+}
+
+static bool launch_path_exists(const char* path) {
+    struct stat st;
+    return path != NULL && stat(path, &st) == 0;
+}
+
+static bool launch_find_wine(char* output, size_t output_size) {
+    const char* home = getenv("METALSHARP_HOME");
+    char path[PATH_MAX];
+    if (home != NULL && home[0] != '\0') {
+        static const char* relative_candidates[] = {"runtime/wine/bin/metalsharp-wine", "runtime/wine/bin/wine"};
+        for (size_t i = 0u; i < sizeof(relative_candidates) / sizeof(relative_candidates[0]); i++) {
+            if (launch_join_path(path, sizeof(path), home, relative_candidates[i]) && launch_path_exists(path)) {
+                int written = snprintf(output, output_size, "%s", path);
+                return written >= 0 && (size_t)written < output_size;
+            }
+        }
+    }
+    static const char* candidates[] = {"/opt/homebrew/bin/wine64", "/usr/bin/wine", "/usr/local/bin/wine"};
+    for (size_t i = 0u; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        if (launch_path_exists(candidates[i])) {
+            int written = snprintf(output, output_size, "%s", candidates[i]);
+            return written >= 0 && (size_t)written < output_size;
+        }
+    }
+    return false;
+}
+
+static bool launch_find_mono(char* output, size_t output_size) {
+    static const char* candidates[] = {"/opt/homebrew/bin/mono", "/usr/local/bin/mono"};
+    for (size_t i = 0u; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        if (launch_path_exists(candidates[i])) {
+            int written = snprintf(output, output_size, "%s", candidates[i]);
+            return written >= 0 && (size_t)written < output_size;
+        }
+    }
+    return false;
+}
+
+static void launch_set_runtime_environment(const char* metalsharp_home) {
+    if (metalsharp_home == NULL || metalsharp_home[0] == '\0')
+        return;
+    char value[PATH_MAX * 2u];
+    int written = snprintf(value, sizeof(value), "%s/runtime/wine/lib:%s/runtime/wine/lib/wine/x86_64-unix",
+                           metalsharp_home, metalsharp_home);
+    if (written < 0 || (size_t)written >= sizeof(value))
+        return;
+#if defined(__APPLE__)
+    (void)setenv("DYLD_FALLBACK_LIBRARY_PATH", value, 1);
+#elif defined(__linux__)
+    (void)setenv("LD_LIBRARY_PATH", value, 1);
+#endif
+}
+
+static void* launch_reap_child(void* opaque) {
+    pid_t pid = (pid_t)(intptr_t)opaque;
+    while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
+    }
+    return NULL;
+}
+
+static bool launch_spawn(const char* executable, char* const argv[], const char* working_directory,
+                         const char* wine_prefix, bool fna_environment, pid_t* pid_out, char* error,
+                         size_t error_size) {
+    int exec_pipe[2];
+    if (pipe(exec_pipe) != 0) {
+        snprintf(error, error_size, "%s", strerror(errno));
+        return false;
+    }
+    (void)fcntl(exec_pipe[1], F_SETFD, FD_CLOEXEC);
+    pid_t pid = fork();
+    if (pid < 0) {
+        snprintf(error, error_size, "%s", strerror(errno));
+        close(exec_pipe[0]);
+        close(exec_pipe[1]);
+        return false;
+    }
+    if (pid == 0) {
+        close(exec_pipe[0]);
+        if (working_directory != NULL && chdir(working_directory) != 0) {
+            int child_errno = errno;
+            (void)write(exec_pipe[1], &child_errno, sizeof(child_errno));
+            _exit(127);
+        }
+        if (wine_prefix != NULL)
+            (void)setenv("WINEPREFIX", wine_prefix, 1);
+        launch_set_runtime_environment(getenv("METALSHARP_HOME"));
+        if (fna_environment) {
+            (void)setenv("METAL_DEVICE_WRAPPER_TYPE", "0", 1);
+#if defined(__APPLE__)
+            (void)setenv("DYLD_LIBRARY_PATH", ".", 1);
+#elif defined(__linux__)
+            (void)setenv("LD_LIBRARY_PATH", ".", 1);
+#endif
+        }
+        execv(executable, argv);
+        int child_errno = errno;
+        (void)write(exec_pipe[1], &child_errno, sizeof(child_errno));
+        _exit(127);
+    }
+    close(exec_pipe[1]);
+    int child_errno = 0;
+    ssize_t read_size;
+    do {
+        read_size = read(exec_pipe[0], &child_errno, sizeof(child_errno));
+    } while (read_size < 0 && errno == EINTR);
+    close(exec_pipe[0]);
+    if (read_size > 0) {
+        while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
+        }
+        snprintf(error, error_size, "%s", strerror(child_errno));
+        return false;
+    }
+    pthread_t reaper;
+    if (pthread_create(&reaper, NULL, launch_reap_child, (void*)(intptr_t)pid) == 0)
+        pthread_detach(reaper);
+    *pid_out = pid;
+    return true;
+}
+
+static bool launch_ensure_wine_prefix(const char* wine, const char* prefix, char* error, size_t error_size) {
+    char system32[PATH_MAX];
+    if (!launch_join_path(system32, sizeof(system32), prefix, "drive_c/windows/system32")) {
+        snprintf(error, error_size, "failed to initialize Wine prefix");
+        return false;
+    }
+    if (launch_path_exists(system32))
+        return true;
+    pid_t pid = fork();
+    if (pid < 0) {
+        snprintf(error, error_size, "%s", strerror(errno));
+        return false;
+    }
+    if (pid == 0) {
+        (void)setenv("WINEPREFIX", prefix, 1);
+        launch_set_runtime_environment(getenv("METALSHARP_HOME"));
+        int null_fd = open("/dev/null", O_RDWR);
+        if (null_fd >= 0) {
+            (void)dup2(null_fd, STDOUT_FILENO);
+            (void)dup2(null_fd, STDERR_FILENO);
+            if (null_fd > STDERR_FILENO)
+                close(null_fd);
+        }
+        execl(wine, wine, "wineboot", "--init", (char*)NULL);
+        _exit(127);
+    }
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno == EINTR)
+            continue;
+        snprintf(error, error_size, "%s", strerror(errno));
+        return false;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        snprintf(error, error_size, "failed to initialize Wine prefix");
+        return false;
+    }
+    return true;
+}
+
+static bool launch_name_has_suffix(const char* name, const char* suffix) {
+    size_t name_length = strlen(name), suffix_length = strlen(suffix);
+    return name_length >= suffix_length && strcmp(name + name_length - suffix_length, suffix) == 0;
+}
+
+static void launch_ascii_lower(char* value) {
+    for (; value != NULL && *value != '\0'; value++) {
+        if (*value >= 'A' && *value <= 'Z')
+            *value = (char)(*value - 'A' + 'a');
+    }
+}
+
+static bool launch_executable_name_allowed(const char* name, bool second_pass) {
+    char lower[NAME_MAX + 1u];
+    int written = snprintf(lower, sizeof(lower), "%s", name);
+    if (written < 0 || (size_t)written >= sizeof(lower) || !launch_name_has_suffix(name, ".exe"))
+        return false;
+    launch_ascii_lower(lower);
+    if (!second_pass && strncmp(lower, "terraria", 8u) == 0 && strstr(lower, "server") == NULL)
+        return true;
+    if (!second_pass && strncmp(lower, "hl2", 3u) == 0 && strstr(lower, "launcher") == NULL)
+        return true;
+    static const char* excluded[] = {"setup", "redist", "dotnet", "installer", "uninstall", "vcredist", "crashhandler"};
+    for (size_t i = 0u; i < sizeof(excluded) / sizeof(excluded[0]); i++)
+        if (strstr(lower, excluded[i]) != NULL)
+            return false;
+    if (second_pass && strstr(lower, "server") != NULL)
+        return false;
+    return true;
+}
+
+bool metalsharp_launch_wine_executable(const char* executable_path, const char* working_directory,
+                                       const char* prefix_override, const char* const* arguments, size_t argument_count,
+                                       pid_t* pid_out, char* error, size_t error_size) {
+    if (executable_path == NULL || executable_path[0] == '\0' || pid_out == NULL || error == NULL || error_size == 0u) {
+        if (error != NULL && error_size > 0u)
+            snprintf(error, error_size, "invalid launch request");
+        return false;
+    }
+    char wine[PATH_MAX], prefix[PATH_MAX];
+    if (!launch_find_wine(wine, sizeof(wine))) {
+        snprintf(error, error_size, "wine not found");
+        return false;
+    }
+    if (prefix_override != NULL && prefix_override[0] != '\0') {
+        int written = snprintf(prefix, sizeof(prefix), "%s", prefix_override);
+        if (written < 0 || (size_t)written >= sizeof(prefix)) {
+            snprintf(error, error_size, "File name too long (os error 63)");
+            return false;
+        }
+    } else {
+        const char* home = getenv("METALSHARP_HOME");
+        int written = home != NULL && home[0] != '\0' ? snprintf(prefix, sizeof(prefix), "%s/prefix-steam", home)
+                                                      : snprintf(prefix, sizeof(prefix), "%s/.metalsharp/prefix-steam",
+                                                                 getenv("HOME") != NULL ? getenv("HOME") : "");
+        if (written < 0 || (size_t)written >= sizeof(prefix)) {
+            snprintf(error, error_size, "File name too long (os error 63)");
+            return false;
+        }
+    }
+    if (!launch_ensure_wine_prefix(wine, prefix, error, error_size))
+        return false;
+    if (argument_count > 4096u) {
+        snprintf(error, error_size, "too many launch arguments");
+        return false;
+    }
+    char** argv = calloc(argument_count + 3u, sizeof(char*));
+    if (argv == NULL) {
+        snprintf(error, error_size, "out of memory");
+        return false;
+    }
+    argv[0] = wine;
+    argv[1] = (char*)executable_path;
+    for (size_t i = 0u; i < argument_count; i++)
+        argv[i + 2u] = (char*)arguments[i];
+    bool launched = launch_spawn(wine, argv, working_directory, prefix, false, pid_out, error, error_size);
+    free(argv);
+    return launched;
+}
+
+static bool launch_find_game_exe_recursive(const char* directory, unsigned depth, bool second_pass, char* output,
+                                           size_t output_size) {
+    DIR* dir = opendir(directory);
+    if (dir == NULL)
+        return false;
+    bool found = false;
+    struct dirent* entry;
+    while (!found && (entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        char path[PATH_MAX];
+        if (!launch_join_path(path, sizeof(path), directory, entry->d_name))
+            continue;
+        struct stat st;
+        if (lstat(path, &st) != 0)
+            continue;
+        if (S_ISREG(st.st_mode) && launch_executable_name_allowed(entry->d_name, second_pass)) {
+            int written = snprintf(output, output_size, "%s", path);
+            found = written >= 0 && (size_t)written < output_size;
+        } else if (S_ISDIR(st.st_mode) && depth < 3u) {
+            found = launch_find_game_exe_recursive(path, depth + 1u, second_pass, output, output_size);
+        }
+    }
+    closedir(dir);
+    return found;
+}
+
+static bool launch_resolve_game_exe(unsigned int appid, char* output, size_t output_size) {
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL || home[0] == '\0')
+        home = getenv("HOME");
+    if (home == NULL)
+        home = "";
+    char game_root[PATH_MAX];
+    int written =
+        snprintf(game_root, sizeof(game_root), "%s%s%s/games/%u", home,
+                 getenv("METALSHARP_HOME") != NULL && getenv("METALSHARP_HOME")[0] != '\0' ? "" : "/",
+                 getenv("METALSHARP_HOME") != NULL && getenv("METALSHARP_HOME")[0] != '\0' ? "" : ".metalsharp", appid);
+    if (written < 0 || (size_t)written >= sizeof(game_root))
+        return false;
+    if (launch_find_game_exe_recursive(game_root, 0u, false, output, output_size) ||
+        launch_find_game_exe_recursive(game_root, 0u, true, output, output_size))
+        return true;
+    written = snprintf(output, output_size, "%s", game_root);
+    return written >= 0 && (size_t)written < output_size;
+}
+
+static MetalsharpResponse* launch_internal_error(const char* message) {
+    MetalsharpResponse* response = make_error_response(message);
+    if (response != NULL)
+        response->http_status = 500;
+    return response;
+}
+
+static MetalsharpResponse* handle_launch(const HttpRequest* req) {
+    JsonValue* body = req != NULL ? json_parse(req->body, req->body_len, NULL) : NULL;
+    const char* exe_value =
+        body != NULL && json_type(body) == JSON_OBJECT ? json_get_string(json_object_get(body, "exePath")) : NULL;
+    const char* exe = exe_value != NULL ? exe_value : "";
+    JsonValue* steam_id_value =
+        body != NULL && json_type(body) == JSON_OBJECT ? json_object_get(body, "steamAppId") : NULL;
+    bool has_steam_id = steam_id_value != NULL && json_type(steam_id_value) == JSON_NUMBER &&
+                        json_get_number(steam_id_value, -1.0) >= 0.0;
+    unsigned int steam_id = has_steam_id ? (unsigned int)json_get_number(steam_id_value, 0.0) : 0u;
+    char resolved[PATH_MAX];
+    if (has_steam_id && strstr(exe, ".exe") == NULL) {
+        if (!launch_resolve_game_exe(steam_id, resolved, sizeof(resolved))) {
+            json_free(body);
+            return launch_internal_error("game path too long");
+        }
+    } else {
+        int written = snprintf(resolved, sizeof(resolved), "%s", exe);
+        if (written < 0 || (size_t)written >= sizeof(resolved)) {
+            json_free(body);
+            return launch_internal_error("File name too long (os error 63)");
+        }
+    }
+    metalsharp_app_log("Launching: %s", resolved);
+
+    bool use_mono = false;
+    if (has_steam_id) {
+        const char* home = getenv("METALSHARP_HOME");
+        char marker[PATH_MAX];
+        if (home != NULL && home[0] != '\0') {
+            int written = snprintf(marker, sizeof(marker), "%s/games/%u/.metalsharp_prepared", home, steam_id);
+            if (written >= 0 && (size_t)written < sizeof(marker)) {
+                FILE* file = fopen(marker, "rb");
+                if (file != NULL) {
+                    char contents[4096];
+                    size_t length = fread(contents, 1u, sizeof(contents) - 1u, file);
+                    contents[length] = '\0';
+                    fclose(file);
+                    use_mono = strstr(contents, "is_dotnet=true") != NULL;
+                }
+            }
+        }
+    }
+
+    char executable[PATH_MAX], error[256];
+    pid_t pid = 0;
+    bool launched = false;
+    if (use_mono) {
+        metalsharp_app_log("Detected XNA/FNA game — using mono runtime");
+        if (!launch_find_mono(executable, sizeof(executable))) {
+            snprintf(error, sizeof(error), "mono not found — install with: brew install mono");
+        } else {
+            char working_directory[PATH_MAX];
+            int written = snprintf(working_directory, sizeof(working_directory), "%s", resolved);
+            char* slash =
+                written >= 0 && (size_t)written < sizeof(working_directory) ? strrchr(working_directory, '/') : NULL;
+            if (slash == NULL) {
+                snprintf(error, sizeof(error), "no parent dir for exe");
+            } else {
+                *slash = '\0';
+                char* argv[] = {executable, resolved, NULL};
+                launched = launch_spawn(executable, argv, working_directory, NULL, true, &pid, error, sizeof(error));
+            }
+        }
+    } else if (!launch_find_wine(executable, sizeof(executable))) {
+        snprintf(error, sizeof(error), "wine not found");
+    } else {
+        const char* home = getenv("METALSHARP_HOME");
+        char prefix[PATH_MAX];
+        if (home == NULL || home[0] == '\0') {
+            const char* user_home = getenv("HOME");
+            int written =
+                snprintf(prefix, sizeof(prefix), "%s/.metalsharp/prefix-steam", user_home != NULL ? user_home : "");
+            if (written < 0 || (size_t)written >= sizeof(prefix))
+                snprintf(error, sizeof(error), "File name too long (os error 63)");
+            else if (launch_ensure_wine_prefix(executable, prefix, error, sizeof(error))) {
+                char* argv[] = {executable, resolved, NULL};
+                launched = launch_spawn(executable, argv, NULL, prefix, false, &pid, error, sizeof(error));
+            }
+        } else {
+            int written = snprintf(prefix, sizeof(prefix), "%s/prefix-steam", home);
+            if (written < 0 || (size_t)written >= sizeof(prefix))
+                snprintf(error, sizeof(error), "File name too long (os error 63)");
+            else if (launch_ensure_wine_prefix(executable, prefix, error, sizeof(error))) {
+                char* argv[] = {executable, resolved, NULL};
+                launched = launch_spawn(executable, argv, NULL, prefix, false, &pid, error, sizeof(error));
+            }
+        }
+    }
+    json_free(body);
+    if (!launched) {
+        metalsharp_app_log("Launch failed: %s", error);
+        return launch_internal_error(error);
+    }
+    metalsharp_app_log("Process started: pid %ld", (long)pid);
+    char response[96];
+    int written = snprintf(response, sizeof(response), "{\"ok\":true,\"pid\":%ld}", (long)pid);
+    if (written < 0 || (size_t)written >= sizeof(response))
+        return launch_internal_error("internal error");
+    return make_data_response(response);
+}
+
+/* ── /game/launch-auto ── */
 
 /*
  * Shared handler for POST /game/launch-auto and POST /launch.
@@ -595,17 +1045,23 @@ static bool parse_launch_body(const char* body, size_t body_len, const char** pi
  * Electron shell can preview or override the env before
  * launching the wine binary.
  */
+static MetalsharpResponse* launch_bad_request(const char* message) {
+    MetalsharpResponse* response = make_error_response(message);
+    if (response != NULL)
+        response->http_status = 400;
+    return response;
+}
+
 static MetalsharpResponse* handle_launch_auto_impl(const HttpRequest* req) {
     if (req == NULL) {
         return make_error_response("launch-auto: invalid request");
     }
-    const char* pipeline_id = LAUNCH_DEFAULT_PIPELINE;
+    char pipeline_id[256];
     unsigned int appid = 0u;
     char* err = NULL;
-    if (!parse_launch_body(req->body, req->body_len, &pipeline_id, &appid, &err)) {
-        MetalsharpResponse* resp = make_error_response(err != NULL ? err : "launch-auto: invalid request");
+    if (!parse_launch_body(req->body, req->body_len, pipeline_id, sizeof(pipeline_id), &appid, &err)) {
         free(err);
-        return resp;
+        return launch_bad_request("appid required");
     }
     const MetalsharpLaunchPolicy* policy = resolve_launch_policy(pipeline_id);
     if (policy == NULL || !metalsharp_launch_policy_valid(policy)) {
@@ -670,7 +1126,12 @@ static MetalsharpResponse* handle_game_launch_auto(const HttpRequest* req) {
  * METALSHARP_HOME tree.
  */
 static MetalsharpResponse* handle_game_prepare(const HttpRequest* req) {
-    (void)req;
+    JsonValue* body = req != NULL ? json_parse(req->body, req->body_len, NULL) : NULL;
+    bool has_appid =
+        body != NULL && json_type(body) == JSON_OBJECT && json_get_number(json_object_get(body, "appid"), 0.0) > 0.0;
+    json_free(body);
+    if (!has_appid)
+        return launch_bad_request("appid required");
     return launch_stub_ok();
 }
 
@@ -688,13 +1149,12 @@ static MetalsharpResponse* handle_game_resolve_routing(const HttpRequest* req) {
     if (req == NULL) {
         return make_error_response("resolve-routing: invalid request");
     }
-    const char* pipeline_id = LAUNCH_DEFAULT_PIPELINE;
+    char pipeline_id[256];
     unsigned int appid = 0u;
     char* err = NULL;
-    if (!parse_launch_body(req->body, req->body_len, &pipeline_id, &appid, &err)) {
-        MetalsharpResponse* resp = make_error_response(err != NULL ? err : "resolve-routing: invalid request");
+    if (!parse_launch_body(req->body, req->body_len, pipeline_id, sizeof(pipeline_id), &appid, &err)) {
         free(err);
-        return resp;
+        return launch_bad_request("appid required");
     }
     const MetalsharpLaunchPolicy* policy = resolve_launch_policy(pipeline_id);
     if (policy == NULL || !metalsharp_launch_policy_valid(policy)) {
@@ -767,9 +1227,195 @@ static MetalsharpResponse* handle_game_running(const HttpRequest* req) {
  * the stub reports no dual-binary layout so the Electron shell
  * falls back to the single-slice install.
  */
+static bool dual_join(char* output, size_t output_size, const char* left, const char* right) {
+    int written = snprintf(output, output_size, "%s%s%s", left,
+                           left[0] != '\0' && left[strlen(left) - 1u] == '/' ? "" : "/", right);
+    return written >= 0 && (size_t)written < output_size;
+}
+
+static bool dual_directory(const char* path) {
+    struct stat info;
+    return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
+}
+
+static bool dual_valid_exe(const char* name) {
+    static const char* rejected[] = {"setup",     "redist",   "dotnet",       "installer",
+                                     "uninstall", "vcredist", "crashhandler", "server"};
+    char lower[PATH_MAX];
+    size_t length = strlen(name);
+    if (length >= sizeof(lower))
+        return false;
+    for (size_t i = 0u; i <= length; i++)
+        lower[i] = (char)tolower((unsigned char)name[i]);
+    for (size_t i = 0u; i < sizeof(rejected) / sizeof(rejected[0]); i++)
+        if (strstr(lower, rejected[i]) != NULL)
+            return false;
+    return true;
+}
+
+static bool dual_has_windows_exe(const char* directory, unsigned depth) {
+    if (depth > 5u)
+        return false;
+    DIR* stream = opendir(directory);
+    if (stream == NULL)
+        return false;
+    bool found = false;
+    struct dirent* entry;
+    while (!found && (entry = readdir(stream)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        char path[PATH_MAX];
+        if (!dual_join(path, sizeof(path), directory, entry->d_name))
+            continue;
+        struct stat info;
+        if (stat(path, &info) != 0)
+            continue;
+        size_t length = strlen(entry->d_name);
+        if (S_ISREG(info.st_mode) && length >= 4u && strcasecmp(entry->d_name + length - 4u, ".exe") == 0 &&
+            dual_valid_exe(entry->d_name))
+            found = true;
+        else if (S_ISDIR(info.st_mode))
+            found = dual_has_windows_exe(path, depth + 1u);
+    }
+    closedir(stream);
+    return found;
+}
+
+static bool dual_find_macos_app(const char* directory, unsigned depth, char* output, size_t output_size) {
+    if (depth > 2u)
+        return false;
+    DIR* stream = opendir(directory);
+    if (stream == NULL)
+        return false;
+    bool found = false;
+    struct dirent* entry;
+    while (!found && (entry = readdir(stream)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        char path[PATH_MAX];
+        if (!dual_join(path, sizeof(path), directory, entry->d_name) || !dual_directory(path))
+            continue;
+        size_t length = strlen(entry->d_name);
+        if (length >= 4u && strcmp(entry->d_name + length - 4u, ".app") == 0) {
+            snprintf(output, output_size, "%s", path);
+            found = true;
+        } else {
+            found = dual_find_macos_app(path, depth + 1u, output, output_size);
+        }
+    }
+    closedir(stream);
+    return found;
+}
+
+static bool dual_manifest_install_dir(const char* path, char* output, size_t output_size) {
+    FILE* input = fopen(path, "rb");
+    if (input == NULL)
+        return false;
+    char line[4096];
+    bool found = false;
+    while (fgets(line, sizeof(line), input) != NULL) {
+        char* cursor = line;
+        while (*cursor == ' ' || *cursor == '\t')
+            cursor++;
+        if (strncmp(cursor, "\"installdir\"", 12u) != 0)
+            continue;
+        cursor += 12u;
+        while (*cursor == ' ' || *cursor == '\t')
+            cursor++;
+        if (*cursor == '"')
+            cursor++;
+        char* end = strchr(cursor, '"');
+        if (end == NULL)
+            end = cursor + strcspn(cursor, "\r\n");
+        size_t length = (size_t)(end - cursor);
+        if (length > 0u && length < output_size) {
+            memcpy(output, cursor, length);
+            output[length] = '\0';
+            found = true;
+        }
+        break;
+    }
+    fclose(input);
+    return found;
+}
+
+static void dual_classify(const char* directory, char* macos_dir, size_t macos_size, char* wine_dir, size_t wine_size) {
+    if (wine_dir[0] == '\0' && dual_has_windows_exe(directory, 0u))
+        snprintf(wine_dir, wine_size, "%s", directory);
+    char app[PATH_MAX];
+    if (macos_dir[0] == '\0' && dual_find_macos_app(directory, 0u, app, sizeof(app)))
+        snprintf(macos_dir, macos_size, "%s", directory);
+    if (wine_dir[0] == '\0' && macos_dir[0] == '\0')
+        snprintf(macos_dir, macos_size, "%s", directory);
+}
+
 static MetalsharpResponse* handle_game_dual_info(const HttpRequest* req) {
-    (void)req;
-    return make_data_response("{\"ok\":true,\"dual_binary\":false,\"slices\":[]}");
+    const char* value = req != NULL && req->query != NULL ? strstr(req->query, "appid=") : NULL;
+    if (value == NULL)
+        return launch_bad_request("appid required");
+    value += 6;
+    char* end = NULL;
+    unsigned long parsed = strtoul(value, &end, 10);
+    if (end == value || parsed == 0u || parsed > 4294967295ul)
+        return launch_bad_request("appid required");
+    unsigned int appid = (unsigned int)parsed;
+    const char* home = getenv("HOME");
+    if (home == NULL)
+        home = "";
+    char manifest_name[64];
+    snprintf(manifest_name, sizeof(manifest_name), "appmanifest_%u.acf", appid);
+    const char* mac_roots[] = {"Library/Application Support/Steam/steamapps", ".steam/steam/steamapps",
+                               ".local/share/Steam/steamapps"};
+    char install_name[PATH_MAX] = "", macos_dir[PATH_MAX] = "", wine_dir[PATH_MAX] = "", macos_app[PATH_MAX] = "";
+    for (size_t i = 0u; i < sizeof(mac_roots) / sizeof(mac_roots[0]); i++) {
+        char steamapps[PATH_MAX], manifest[PATH_MAX];
+        if (!dual_join(steamapps, sizeof(steamapps), home, mac_roots[i]) ||
+            !dual_join(manifest, sizeof(manifest), steamapps, manifest_name))
+            continue;
+        char current_name[PATH_MAX];
+        if (!dual_manifest_install_dir(manifest, current_name, sizeof(current_name)))
+            continue;
+        char common[PATH_MAX], game[PATH_MAX];
+        if (dual_join(common, sizeof(common), steamapps, "common") &&
+            dual_join(game, sizeof(game), common, current_name) && dual_directory(game)) {
+            dual_classify(game, macos_dir, sizeof(macos_dir), wine_dir, sizeof(wine_dir));
+            if (install_name[0] == '\0')
+                snprintf(install_name, sizeof(install_name), "%s", current_name);
+        }
+    }
+    char wine_steamapps[PATH_MAX], wine_manifest[PATH_MAX], current_name[PATH_MAX] = "";
+    dual_join(wine_steamapps, sizeof(wine_steamapps), home,
+              ".metalsharp/prefix-steam/drive_c/Program Files (x86)/Steam/steamapps");
+    if (install_name[0] != '\0') {
+        char common[PATH_MAX], game[PATH_MAX];
+        if (dual_join(common, sizeof(common), wine_steamapps, "common") &&
+            dual_join(game, sizeof(game), common, install_name) && dual_directory(game))
+            dual_classify(game, macos_dir, sizeof(macos_dir), wine_dir, sizeof(wine_dir));
+    } else if (dual_join(wine_manifest, sizeof(wine_manifest), wine_steamapps, manifest_name) &&
+               dual_manifest_install_dir(wine_manifest, current_name, sizeof(current_name))) {
+        char common[PATH_MAX], game[PATH_MAX];
+        if (dual_join(common, sizeof(common), wine_steamapps, "common") &&
+            dual_join(game, sizeof(game), common, current_name) && dual_directory(game))
+            dual_classify(game, macos_dir, sizeof(macos_dir), wine_dir, sizeof(wine_dir));
+    }
+    if (macos_dir[0] != '\0')
+        (void)dual_find_macos_app(macos_dir, 0u, macos_app, sizeof(macos_app));
+    jsonbuf_t body = jsonbuf_new();
+    if (!body.ok)
+        return make_error_response("out of memory");
+    char prefix[128];
+    snprintf(prefix, sizeof(prefix), "{\"ok\":true,\"appid\":%u,\"has_native_build\":%s,\"macos_dir\":", appid,
+             macos_app[0] != '\0' ? "true" : "false");
+    jsonbuf_append(&body, prefix);
+    jsonbuf_append_escaped(&body, macos_dir[0] != '\0' ? macos_dir : NULL);
+    jsonbuf_append(&body, ",\"macos_app\":");
+    jsonbuf_append_escaped(&body, macos_app[0] != '\0' ? macos_app : NULL);
+    jsonbuf_append(&body, ",\"wine_dir\":");
+    jsonbuf_append_escaped(&body, wine_dir[0] != '\0' ? wine_dir : NULL);
+    jsonbuf_append(&body, "}");
+    MetalsharpResponse* response = body.ok ? make_data_response(body.data) : make_error_response("out of memory");
+    jsonbuf_free(&body);
+    return response;
 }
 
 /* ── /processes/force-kill ── */
@@ -784,26 +1430,87 @@ static MetalsharpResponse* handle_game_dual_info(const HttpRequest* req) {
  */
 static MetalsharpResponse* handle_processes_force_kill(const HttpRequest* req) {
     (void)req;
-    return launch_stub_ok();
+    char body[160];
+    int n = snprintf(body, sizeof(body),
+                     "{\"ok\":true,\"backendPid\":%ld,\"terminated\":[],\"killed\":[],\"errors\":[]}", (long)getpid());
+    if (n < 0 || (size_t)n >= sizeof(body))
+        return NULL;
+    return make_data_response(body);
 }
 
 /* ── /kill ── */
 
+static void launch_run_quiet_command(char* const argv[]) {
+    pid_t pid = fork();
+    if (pid < 0)
+        return;
+    if (pid == 0) {
+        int null_fd = open("/dev/null", O_RDWR);
+        if (null_fd >= 0) {
+            (void)dup2(null_fd, STDOUT_FILENO);
+            (void)dup2(null_fd, STDERR_FILENO);
+            if (null_fd > STDERR_FILENO)
+                close(null_fd);
+        }
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
+    }
+}
+
+static void launch_kill_process_tree(long pid) {
+    if (pid <= 0)
+        return;
+    char pid_text[32];
+    snprintf(pid_text, sizeof(pid_text), "%ld", pid);
+    char* pkill_children[] = {"pkill", "-9", "-P", pid_text, NULL};
+    launch_run_quiet_command(pkill_children);
+    char* kill_parent[] = {"kill", "-9", pid_text, NULL};
+    launch_run_quiet_command(kill_parent);
+    usleep(300000u);
+    char* kill_crash_handler[] = {"pkill", "-9", "-f", "UnityCrashHandler", NULL};
+    launch_run_quiet_command(kill_crash_handler);
+}
+
 /*
- * POST /kill — graceful backend shutdown. Calls http_server_stop
- * on the bound server so the accept loop exits; the main thread
- * then runs the cleanup sequence declared in
- *     contract-spec.json → shutdown_sequence
- * The route always returns {"ok":true} so the Electron shell
- * observes an immediate acknowledgement even if the accept loop
- * has not yet drained.
+ * POST /kill — terminate the game process identified by `pid`.
+ * The historical implementation first kills direct children, then the
+ * requested process, waits briefly, and finally removes Unity crash helpers.
+ * A missing or already-exited process remains an idempotent success.
  */
 static MetalsharpResponse* handle_kill(const HttpRequest* req) {
-    (void)req;
-    if (g_launch_server != NULL) {
-        http_server_stop(g_launch_server);
+    long pid = 0;
+    bool has_appid = false;
+    unsigned int appid = 0u;
+    if (req != NULL && req->body != NULL) {
+        JsonValue* body = json_parse(req->body, req->body_len, NULL);
+        if (body != NULL && json_type(body) == JSON_OBJECT) {
+            pid = (long)json_get_number(json_object_get(body, "pid"), 0.0);
+            JsonValue* appid_value = json_object_get(body, "appid");
+            if (appid_value != NULL && json_type(appid_value) == JSON_NUMBER) {
+                has_appid = true;
+                appid = (unsigned int)json_get_number(appid_value, 0.0);
+            }
+        }
+        json_free(body);
     }
-    return launch_stub_ok();
+    if (pid <= 0 && !has_appid)
+        return launch_bad_request("pid required");
+    /* Running-game PID registration is populated by launch-auto once the MTSP
+     * process handoff is active. Until then the request PID is the same fallback
+     * used by the Rust backend when an appid has no registered process. */
+    long target_pid = pid;
+    launch_kill_process_tree(target_pid);
+    if (has_appid)
+        metalsharp_app_log("[STOPPED] appid %u | pid %ld", appid, target_pid);
+    else
+        metalsharp_app_log("[STOPPED] pid %ld", target_pid);
+    char response[96];
+    int n = snprintf(response, sizeof(response), "{\"ok\":true,\"pid\":%ld}", target_pid);
+    if (n < 0 || (size_t)n >= sizeof(response))
+        return make_error_response("internal error");
+    return make_data_response(response);
 }
 
 /* ── Route registration ── */
@@ -829,7 +1536,7 @@ void launch_register_routes(HttpServer* server, Database* db) {
      * Both routes resolve to the same implementation because the
      * contract documents identical request/response shapes. */
     http_server_register(server, "POST", "/game/launch-auto", handle_game_launch_auto);
-    http_server_register(server, "POST", "/launch", handle_game_launch_auto);
+    http_server_register(server, "POST", "/launch", handle_launch);
 
     /* Prepare / resolve / inspect family. */
     http_server_register(server, "POST", "/game/prepare", handle_game_prepare);

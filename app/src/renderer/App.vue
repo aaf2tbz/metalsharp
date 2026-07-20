@@ -135,8 +135,8 @@ async function checkBackend() {
     const res = await getAPI().request("GET", "/status");
     backendConnected.value = res.ok;
     if (res.ok) {
-      const status = res.data as { version?: string } | undefined;
-      if (status?.version) backendVersion.value = status.version;
+      const status = (res.data ?? res) as { version?: string };
+      if (status.version) backendVersion.value = status.version;
     }
   } catch {
     backendConnected.value = false;

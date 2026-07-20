@@ -901,6 +901,52 @@ static bool builder_append_value(StringBuilder* b, const JsonValue* value) {
     return false;
 }
 
+static bool builder_append_indent(StringBuilder* builder, size_t depth) {
+    for (size_t i = 0u; i < depth * 2u; i++)
+        if (!builder_append_byte(builder, ' '))
+            return false;
+    return true;
+}
+
+static bool builder_append_value_pretty(StringBuilder* builder, const JsonValue* value, size_t depth) {
+    if (value == NULL)
+        return builder_append_cstr(builder, "null");
+    if (value->type != JSON_ARRAY && value->type != JSON_OBJECT)
+        return builder_append_value(builder, value);
+    if (value->type == JSON_ARRAY) {
+        if (value->as_array.length == 0u)
+            return builder_append_cstr(builder, "[]");
+        if (!builder_append_cstr(builder, "[\n"))
+            return false;
+        for (size_t i = 0u; i < value->as_array.length; i++) {
+            if (!builder_append_indent(builder, depth + 1u) ||
+                !builder_append_value_pretty(builder, value->as_array.items[i], depth + 1u))
+                return false;
+            if (i + 1u < value->as_array.length && !builder_append_byte(builder, ','))
+                return false;
+            if (!builder_append_byte(builder, '\n'))
+                return false;
+        }
+        return builder_append_indent(builder, depth) && builder_append_byte(builder, ']');
+    }
+    if (value->as_object.length == 0u)
+        return builder_append_cstr(builder, "{}");
+    if (!builder_append_cstr(builder, "{\n"))
+        return false;
+    for (size_t i = 0u; i < value->as_object.length; i++) {
+        const char* key = value->as_object.keys[i];
+        if (!builder_append_indent(builder, depth + 1u) || !builder_append_string(builder, key, strlen(key)) ||
+            !builder_append_cstr(builder, ": ") ||
+            !builder_append_value_pretty(builder, value->as_object.values[i], depth + 1u))
+            return false;
+        if (i + 1u < value->as_object.length && !builder_append_byte(builder, ','))
+            return false;
+        if (!builder_append_byte(builder, '\n'))
+            return false;
+    }
+    return builder_append_indent(builder, depth) && builder_append_byte(builder, '}');
+}
+
 /* ===== Public API ===== */
 
 JsonValue* json_parse(const char* input, size_t len, char** error) {
@@ -1011,17 +1057,193 @@ JsonValue* json_object_get(const JsonValue* value, const char* key) {
     return NULL;
 }
 
+JsonValue* json_new_null(void) {
+    return calloc(1u, sizeof(JsonValue));
+}
+
+JsonValue* json_new_bool(bool value) {
+    JsonValue* result = json_new_null();
+    if (result != NULL) {
+        result->type = JSON_BOOL;
+        result->as_bool = value;
+    }
+    return result;
+}
+
+JsonValue* json_new_number(double value) {
+    JsonValue* result = json_new_null();
+    if (result != NULL) {
+        result->type = JSON_NUMBER;
+        result->as_number = value;
+    }
+    return result;
+}
+
+JsonValue* json_new_string(const char* value) {
+    if (value == NULL)
+        return NULL;
+    JsonValue* result = json_new_null();
+    if (result == NULL)
+        return NULL;
+    result->type = JSON_STRING;
+    result->as_string.data = strdup(value);
+    if (result->as_string.data == NULL) {
+        free(result);
+        return NULL;
+    }
+    result->as_string.length = strlen(value);
+    return result;
+}
+
+JsonValue* json_new_array(void) {
+    JsonValue* result = json_new_null();
+    if (result != NULL)
+        result->type = JSON_ARRAY;
+    return result;
+}
+
+JsonValue* json_new_object(void) {
+    JsonValue* result = json_new_null();
+    if (result != NULL)
+        result->type = JSON_OBJECT;
+    return result;
+}
+
+JsonValue* json_clone(const JsonValue* value) {
+    if (value == NULL)
+        return NULL;
+    char* serialized = json_serialize(value);
+    if (serialized == NULL)
+        return NULL;
+    JsonValue* clone = json_parse(serialized, strlen(serialized), NULL);
+    free(serialized);
+    return clone;
+}
+
+bool json_array_append_owned(JsonValue* array, JsonValue* value) {
+    if (array == NULL || array->type != JSON_ARRAY || value == NULL)
+        return false;
+    if (array->as_array.length == array->as_array.capacity) {
+        size_t old_capacity = array->as_array.capacity;
+        size_t next = old_capacity == 0u ? JSON_INITIAL_CAPACITY : old_capacity * 2u;
+        if (next < old_capacity)
+            return false;
+        JsonValue** items = realloc(array->as_array.items, next * sizeof(JsonValue*));
+        if (items == NULL)
+            return false;
+        array->as_array.items = items;
+        array->as_array.capacity = next;
+    }
+    array->as_array.items[array->as_array.length++] = value;
+    return true;
+}
+
+bool json_array_remove(JsonValue* array, size_t index) {
+    if (array == NULL || array->type != JSON_ARRAY || index >= array->as_array.length)
+        return false;
+    json_free(array->as_array.items[index]);
+    size_t remaining = array->as_array.length - index - 1u;
+    if (remaining > 0u)
+        memmove(array->as_array.items + index, array->as_array.items + index + 1u, remaining * sizeof(JsonValue*));
+    array->as_array.length--;
+    return true;
+}
+
+bool json_object_set_owned(JsonValue* object, const char* key, JsonValue* value) {
+    if (object == NULL || object->type != JSON_OBJECT || key == NULL || value == NULL)
+        return false;
+    size_t found = SIZE_MAX;
+    for (size_t i = 0u; i < object->as_object.length;) {
+        if (strcmp(object->as_object.keys[i], key) != 0) {
+            i++;
+            continue;
+        }
+        if (found == SIZE_MAX) {
+            found = i++;
+            continue;
+        }
+        free(object->as_object.keys[i]);
+        json_free(object->as_object.values[i]);
+        size_t remaining = object->as_object.length - i - 1u;
+        if (remaining > 0u) {
+            memmove(object->as_object.keys + i, object->as_object.keys + i + 1u, remaining * sizeof(char*));
+            memmove(object->as_object.values + i, object->as_object.values + i + 1u, remaining * sizeof(JsonValue*));
+        }
+        object->as_object.length--;
+    }
+    if (found != SIZE_MAX) {
+        json_free(object->as_object.values[found]);
+        object->as_object.values[found] = value;
+        return true;
+    }
+    if (object->as_object.length == object->as_object.capacity) {
+        size_t old_capacity = object->as_object.capacity;
+        size_t next = old_capacity == 0u ? JSON_INITIAL_CAPACITY : old_capacity * 2u;
+        if (next < old_capacity)
+            return false;
+        char** keys = realloc(object->as_object.keys, next * sizeof(char*));
+        if (keys == NULL)
+            return false;
+        object->as_object.keys = keys;
+        JsonValue** values = realloc(object->as_object.values, next * sizeof(JsonValue*));
+        if (values == NULL)
+            return false;
+        object->as_object.values = values;
+        object->as_object.capacity = next;
+    }
+    char* copied_key = strdup(key);
+    if (copied_key == NULL)
+        return false;
+    size_t index = object->as_object.length++;
+    object->as_object.keys[index] = copied_key;
+    object->as_object.values[index] = value;
+    return true;
+}
+
+bool json_object_set_clone(JsonValue* object, const char* key, const JsonValue* value) {
+    JsonValue* clone = json_clone(value);
+    if (clone == NULL)
+        return false;
+    if (json_object_set_owned(object, key, clone))
+        return true;
+    json_free(clone);
+    return false;
+}
+
+bool json_object_remove(JsonValue* object, const char* key) {
+    if (object == NULL || object->type != JSON_OBJECT || key == NULL)
+        return false;
+    bool removed = false;
+    for (size_t i = 0u; i < object->as_object.length;) {
+        if (strcmp(object->as_object.keys[i], key) != 0) {
+            i++;
+            continue;
+        }
+        free(object->as_object.keys[i]);
+        json_free(object->as_object.values[i]);
+        size_t remaining = object->as_object.length - i - 1u;
+        if (remaining > 0u) {
+            memmove(object->as_object.keys + i, object->as_object.keys + i + 1u, remaining * sizeof(char*));
+            memmove(object->as_object.values + i, object->as_object.values + i + 1u, remaining * sizeof(JsonValue*));
+        }
+        object->as_object.length--;
+        removed = true;
+    }
+    return removed;
+}
+
 char* json_serialize(const JsonValue* value) {
-    StringBuilder builder;
-    builder.data = NULL;
-    builder.length = 0;
-    builder.capacity = 0;
-    builder.failed = false;
-    if (!builder_append_value(&builder, value)) {
+    StringBuilder builder = {0};
+    if (!builder_append_value(&builder, value) || builder.failed) {
         free(builder.data);
         return NULL;
     }
-    if (builder.failed) {
+    return builder.data;
+}
+
+char* json_serialize_pretty(const JsonValue* value) {
+    StringBuilder builder = {0};
+    if (!builder_append_value_pretty(&builder, value, 0u) || builder.failed) {
         free(builder.data);
         return NULL;
     }

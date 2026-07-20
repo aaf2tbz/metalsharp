@@ -1,0 +1,783 @@
+{
+  "cases": 86,
+  "matches": 86,
+  "mismatches": [],
+  "mode": "behavioral",
+  "results": [
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/setup/state",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/setup/device-name",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/setup/dependencies",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/setup/agility-versions",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/setup/install-progress",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/setup/installing",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/library",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/api-key",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/is-running",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/stop-targets",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/bridge-status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/watch-steamapps",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/scan",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/config",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/metalfx/state",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/metalfx/toggle",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/metalfx/state",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/metalfx/toggle",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/metalfx/state",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/metalfx/state",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/wine-mono/status?prefix=steam",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/sharp-library",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/sharp-library/gog/status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/sharp-library/gog/games",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/sharp-library/gog/games",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/progress",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/uninstall",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/stop",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/import",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/install",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/progress",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/install",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/progress",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/play",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/initialize-prefix",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/auth-code",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/auth-code",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/logout",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/remove-prefix",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/wine-mono/install",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/wine-mono/status?prefix=gog",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/wine-mono/install",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/wine-mono/reset",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/wine-mono/reset",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/wine-mono/status?prefix=gog",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/wine-mono/status?prefix=invalid",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/bottles",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/bottles/profiles",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/bottles/redist-sources",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/bottles/route-contracts",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/bottles/compatibility-matrix",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/set-windows-version",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/apply-font-subs",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/seed-post-wineboot",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/cache/size",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/cache/clear",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/cache/size",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/logs",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/logs/crash-reports",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/logs/stream?after=0",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/game/running",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/game/dual-info?appid=4242",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "GET",
+      "path": "/game/dual-info?appid=invalid",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/dmg-path",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/update/cleanup",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/migrate/check",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/migrate/check",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/migrate/check",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/migrate/check",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/migrate/check",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/migrate/check",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/migrate/progress",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/migrate/report",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/migrate/report",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/mtsp/pipelines",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/mtsp/default-rules",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/diagnostics/pipeline/dry-run?appid=0",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/diagnostics/m12/dry-run?appid=0",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/setup/save",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/setup/state",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/launch",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kill",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/cache/clear",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/cache/size",
+      "response_match": true
+    }
+  ],
+  "scope": "electron-critical"
+}

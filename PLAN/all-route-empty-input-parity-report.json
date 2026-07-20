@@ -1,0 +1,2385 @@
+{
+  "cases": 264,
+  "matches": 264,
+  "mismatches": [],
+  "mode": "behavioral",
+  "results": [
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/bottles",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/apply-font-subs",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/bottles/compatibility-matrix",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/doctor",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/edit",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/get",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/prepare",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/bottles/profiles",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/record-compatibility",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/bottles/redist-sources",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/refresh",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/relaunch-installer",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/repair-component",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/bottles/route-contracts",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/seed-post-wineboot",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/set-runtime-profile",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/set-windows-version",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/sync-steam",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/bottles/verify-directx",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/cache/clear",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/cache/size",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/config",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/config",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/d3dmetal/bottles/install-homebrew-gptk",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/d3dmetal/bottles/install-rosetta",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/d3dmetal/bottles/install-x64-redist",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/d3dmetal/bottles/play",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/d3dmetal/bottles/repair-gptk-payload",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/d3dmetal/bottles/save",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/d3dmetal/bottles/seed-prefix",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/d3dmetal/bottles/status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/diagnostics/binding-contract/validate",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/diagnostics/cache-doctor",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/diagnostics/command-replay/validate",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/diagnostics/fna/classify",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/diagnostics/fna/explain",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "GET",
+      "path": "/diagnostics/fna/signals",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/diagnostics/launch",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/diagnostics/launch/timing",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/diagnostics/m12/dry-run",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/diagnostics/pipeline/dry-run",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/diagnostics/pso-manifests",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/diagnostics/runtime-artifacts",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/diagnostics/wineboot-state",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "GET",
+      "path": "/game/dual-info",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/game/launch-auto",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/game/prepare",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/game/resolve-routing",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/game/running",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/goldberg/status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/goldberg/toggle",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/add-sanitize-rule",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/check-results",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/filesystem-check",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/full-breakpoint-map",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/hw-breakpoint-map",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/module-sanitize",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/run-all-checks",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/seed-demo",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/simulate-check",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/status-survey",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/timing-analysis",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/apc/allocate-trampoline",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/apc/get-thread-context",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/apc/inject-sequence",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/apc/queue",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/apc/queue-status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/apc/set-thread-context",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/apc/suspend-thread",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/apc/test-alert",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/apc/trampoline-status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/apc/wait-alertable",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/driver/create-device",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/driver/decode-ioctl",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/driver/dispatch-irp",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/driver/extension-template",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/driver/list",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/driver/list-devices",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/driver/list-ioctls",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/driver/list-irps",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/driver/load",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/driver/register-ioctl",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/driver/seed-demo",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/driver/type-mapping-survey",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/driver/unload",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/kernel-translation/es-live/events",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/kernel-translation/es-live/processes",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es-live/start",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/kernel-translation/es-live/status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es-live/stop",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/create-ipc-channel",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/detect-events",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/fire-image-event",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/fire-process-event",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/fire-thread-event",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/image-events",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/ipc-channels",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/list-callbacks",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/nt-callback-bridge",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/process-events",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/register-callback",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/seed-demo",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/thread-events",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/es/unregister-callback",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/handle/close",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/handle/create",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/handle/duplicate",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/handle/enumerate",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/handle/enumerate-fds",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/handle/enumerate-ports",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/handle/query",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/handle/seed-demo",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/handle/snapshot-all",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/handle/system-info",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/handle/table-status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/handle/unified-snapshot",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/host-probe",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/bottle-configure",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/bottle-get-config",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/bottle-list-configs",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/extension-activate",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/extension-crash",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/extension-deactivate",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/extension-install",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/extension-status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/fallback-mode",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/full-stack-status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/list-multi-ac",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/list-performance",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/log-translation",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/performance-profile",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/query-translation-log",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/register-multi-ac",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/runtime-doctor",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/seed-demo",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/simulate-conflict",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integration/simulate-pipeline",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integrity/list-modules",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integrity/query-process-signing",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integrity/query-signing-level",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integrity/register-macho-module",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integrity/register-pe-module",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integrity/seed-demo",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/integrity/set-cached-signing-level",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/kernel-translation/ipc/handles",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ipc/start",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/kernel-translation/ipc/status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ipc/stop",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ob/access-log",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ob/capability-survey",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ob/list-protected",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ob/list-registrations",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ob/post-operations",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ob/pre-operations",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ob/protect-process",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ob/register-callback",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ob/seed-demo",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ob/simulate-operation",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ob/unprotect-process",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/ob/unregister-callback",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/probe",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/thread/compute-delta",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/thread/configure-notifications",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/thread/create-watcher",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/thread/destroy-watcher",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/thread/info",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/thread/list-deltas",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/thread/list-watchers",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/thread/mechanism-survey",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/thread/poll-watcher",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/thread/seed-demo",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/thread/snapshot",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/kernel-translation/thread/watcher-status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/kill",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/launch",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/launcher/evidence",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/logs",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/logs/crash-reports",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/logs/stream",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/metalfx/state",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/metalfx/toggle",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/mtsp/default-rules",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/mtsp/doctor",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/mtsp/launch-shape",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/mtsp/pipelines",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/mtsp/prepare",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/mtsp/recipe",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/processes/force-kill",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/runtime/host-abi",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/scan",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/setup/agility-versions",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/setup/dependencies",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/setup/device-name",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/setup/install-all",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/setup/install-deps",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/setup/install-progress",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/setup/install-vcpp-x64",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/setup/install-vcpp-x86",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/setup/installing",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/setup/save",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/setup/state",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/sharp-library",
+      "response_match": true
+    },
+    {
+      "candidate_status": 404,
+      "filesystem_match": true,
+      "legacy_status": 404,
+      "match": true,
+      "method": "GET",
+      "path": "/sharp-library/cover",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/doctor",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/auth-code",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/sharp-library/gog/games",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/import",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/initialize-prefix",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/install",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/logout",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/play",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/progress",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/remove-prefix",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/sharp-library/gog/status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/stop",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/sync",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/gog/uninstall",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/import-bottle-app",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/install",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/launch",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/set-cover",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/set-cover-position",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/set-engine",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/set-launch-args",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/sharp-library/uninstall",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/api-key",
+      "response_match": true
+    },
+    {
+      "candidate_status": 500,
+      "filesystem_match": true,
+      "legacy_status": 500,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/bridge-start",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/bridge-status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/compatdata",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/d3d12-runtime-doctor",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/install",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/install-game",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/install-recipe-deps",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/is-running",
+      "response_match": true
+    },
+    {
+      "candidate_status": 500,
+      "filesystem_match": true,
+      "legacy_status": 500,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/launch",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/launch-game",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/launch-offline",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/library",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/mac-install",
+      "response_match": true
+    },
+    {
+      "candidate_status": 500,
+      "filesystem_match": true,
+      "legacy_status": 500,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/mac-launch",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/mac-launch-game",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/mac-stop",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/runtime-doctor",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/save-api-key",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/status",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/stop",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/stop-targets",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/uninstall-game",
+      "response_match": true
+    },
+    {
+      "candidate_status": 400,
+      "filesystem_match": true,
+      "legacy_status": 400,
+      "match": true,
+      "method": "POST",
+      "path": "/steam/view-game",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/steam/watch-steamapps",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/check",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/update/cleanup",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/dmg-path",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/migrate/check",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/migrate/progress",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/migrate/report",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/update/migrate/start",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/update/progress",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/update/start",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/wine-mono/install",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "POST",
+      "path": "/wine-mono/reset",
+      "response_match": true
+    },
+    {
+      "candidate_status": 200,
+      "filesystem_match": true,
+      "legacy_status": 200,
+      "match": true,
+      "method": "GET",
+      "path": "/wine-mono/status",
+      "response_match": true
+    }
+  ],
+  "scope": "all-empty-baselines"
+}

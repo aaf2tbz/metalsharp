@@ -94,17 +94,21 @@
  *   file-system state at request time.
  */
 
+#include "compat_log.h"
 #include "database.h"
 #include "http_server.h"
 #include "json.h"
 #include "logger.h"
 #include "server.h"
 
+#include <ctype.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /* ── Constants ── */
@@ -158,6 +162,7 @@ static MetalsharpResponse* handle_steam_stop_targets(const HttpRequest* req);
 static MetalsharpResponse* handle_steam_save_api_key(const HttpRequest* req);
 static MetalsharpResponse* handle_steam_api_key(const HttpRequest* req);
 static MetalsharpResponse* handle_steam_bridge_status(const HttpRequest* req);
+static MetalsharpResponse* handle_steam_watch_steamapps(const HttpRequest* req);
 
 /* Generic "{"ok":true}" stub — used by every launch, install,
  * uninstall, bridge, compatdata, runtime-doctor, and mac-*
@@ -192,6 +197,7 @@ static MetalsharpResponse* make_data_response(const char* body) {
     }
     r->ok = true;
     r->data = val;
+    r->data_kind = METALSHARP_RESPONSE_JSON_VALUE;
     return r;
 }
 
@@ -208,17 +214,6 @@ static MetalsharpResponse* make_error_response(const char* msg) {
     r->ok = false;
     r->error_msg = strdup(msg != NULL ? msg : "error");
     return r;
-}
-
-/*
- * Build the {"ok":true} acknowledgement used by every stubbed
- * Steam route. Routes share this helper so the literal payload
- * stays in one place; if the maintainers later decide to attach
- * additional fields (a request id, an action label, etc.), one
- * edit propagates to every caller.
- */
-static MetalsharpResponse* steam_ok_response(void) {
-    return make_data_response("{\"ok\":true}");
 }
 
 /* ── SQL helpers ── */
@@ -290,8 +285,8 @@ static int kv_get_cb(void* raw, int ncols, char** values, char** names) {
     if (c == NULL) {
         return 0;
     }
-    if (ncols >= 2 && values != NULL && values[0] != NULL && values[1] != NULL) {
-        c->value = strdup(values[1]);
+    if (ncols >= 1 && values != NULL && values[0] != NULL) {
+        c->value = strdup(values[0]);
     }
     return 0;
 }
@@ -397,9 +392,14 @@ static MetalsharpResponse* handle_steam_status(const HttpRequest* req) {
      * Contents/MacOS/Steam alongside the installed flag; for
      * now the running flag reflects the bridge or scanner
      * worker that last updated g_steam_running. */
-    char body[128];
-    int n = snprintf(body, sizeof(body), "{\"installed\":%s,\"running\":%s}", steam_installed() ? "true" : "false",
-                     running ? "true" : "false");
+    char body[512];
+    int n = snprintf(body, sizeof(body),
+                     "{\"installed\":false,\"running\":%s,\"installing\":false,"
+                     "\"path\":null,\"metalsharp_wine_available\":false,\"mac_installed\":%s,"
+                     "\"mac_running\":false,\"mac_path\":null,"
+                     "\"mac_install_url\":\"https://store.steampowered.com/about/\","
+                     "\"login_state\":{\"state\":\"unknown\",\"account\":null}}",
+                     running ? "true" : "false", steam_installed() ? "true" : "false");
     if (n < 0 || (size_t)n >= sizeof(body)) {
         return make_error_response("internal error");
     }
@@ -408,12 +408,16 @@ static MetalsharpResponse* handle_steam_status(const HttpRequest* req) {
 
 static MetalsharpResponse* handle_steam_library(const HttpRequest* req) {
     (void)req;
+    metalsharp_app_log("Loading Steam library...");
+    metalsharp_app_log("Loaded 0 games");
     /* Real implementation will scan ~/Library/Application
      * Support/Steam/steamapps for appmanifest_*.acf entries,
      * parse each into a {appid,name,installed} record, and
      * count the array. The stub returns an empty library so
      * the Electron shell renders a clean "no games" state. */
-    return make_data_response("{\"ok\":true,\"games\":[],\"total\":0}");
+    return make_data_response("{\"ok\":true,\"games\":[],\"total\":0,\"installed_count\":0,"
+                              "\"sync\":{\"api_key_set\":false,\"owned_games_cache\":false,"
+                              "\"steam_id\":\"\",\"steam_id_detected\":false}}");
 }
 
 static MetalsharpResponse* handle_steam_is_running(const HttpRequest* req) {
@@ -427,18 +431,161 @@ static MetalsharpResponse* handle_steam_is_running(const HttpRequest* req) {
     return make_data_response(body);
 }
 
+static MetalsharpResponse* steam_route_response(const char* json, int status) {
+    MetalsharpResponse* response = make_data_response(json);
+    if (response != NULL)
+        response->http_status = status;
+    return response;
+}
+
 static MetalsharpResponse* handle_steam_stub_ok(const HttpRequest* req) {
-    (void)req;
-    return steam_ok_response();
+    if (req == NULL)
+        return make_error_response("invalid request");
+    const char* path = req->path;
+    if (strcmp(path, "/steam/bridge-start") == 0)
+        return steam_route_response(
+            "{\"ok\":false,\"error\":\"steambridge.exe not found — Wine-side Steam API bridge is not yet "
+            "available\"}",
+            500);
+    if (strcmp(path, "/steam/compatdata") == 0)
+        return steam_route_response("{\"ok\":false,\"deprecated\":true,"
+                                    "\"error\":\"compatdata is deprecated and no longer written\","
+                                    "\"replacement\":\"bottle manifest route state\"}",
+                                    200);
+    if (strcmp(path, "/steam/install") == 0)
+        return steam_route_response(
+            "{\"ok\":true,\"path\":\"Steam installation started — polling /steam/status for completion\"}", 200);
+    if (strcmp(path, "/steam/launch") == 0)
+        return steam_route_response("{\"ok\":false,\"error\":\"MetalSharp Wine not found\"}", 500);
+    if (strcmp(path, "/steam/mac-launch") == 0)
+        return steam_route_response("{\"ok\":false,\"error\":\"macOS Steam is not installed\"}", 500);
+    if (strcmp(path, "/steam/mac-install") == 0) {
+        char body[192];
+        int n = snprintf(body, sizeof(body),
+                         "{\"ok\":true,\"installed\":false,\"pid\":%ld,"
+                         "\"url\":\"https://store.steampowered.com/about/\"}",
+                         (long)getpid());
+        return n > 0 && (size_t)n < sizeof(body) ? steam_route_response(body, 200) : NULL;
+    }
+    if (strcmp(path, "/steam/stop") == 0 || strcmp(path, "/steam/mac-stop") == 0)
+        return steam_route_response("{\"ok\":true,\"running\":false}", 200);
+    bool status_400 = strcmp(path, "/steam/install-game") == 0 || strcmp(path, "/steam/launch-game") == 0 ||
+                      strcmp(path, "/steam/launch-offline") == 0 || strcmp(path, "/steam/mac-launch-game") == 0 ||
+                      strcmp(path, "/steam/uninstall-game") == 0 || strcmp(path, "/steam/view-game") == 0;
+    return steam_route_response("{\"ok\":false,\"error\":\"appid required\"}", status_400 ? 400 : 200);
+}
+
+static bool steam_contains_case_insensitive(const char* text, const char* needle) {
+    if (text == NULL || needle == NULL)
+        return false;
+    size_t needle_len = strlen(needle);
+    if (needle_len == 0)
+        return true;
+    for (const char* start = text; *start != '\0'; start++) {
+        size_t i = 0;
+        while (i < needle_len && start[i] != '\0' &&
+               tolower((unsigned char)start[i]) == tolower((unsigned char)needle[i]))
+            i++;
+        if (i == needle_len)
+            return true;
+    }
+    return false;
+}
+
+static bool steam_cleanup_command(const char* command, const char* prefix) {
+    if (strstr(command, " rg ") != NULL || strstr(command, "rg -i") != NULL || strstr(command, "ps axo") != NULL ||
+        strstr(command, "Steam.app/Contents/MacOS") != NULL || strstr(command, "steam_osx") != NULL)
+        return false;
+    return strstr(command, prefix) != NULL ||
+           steam_contains_case_insensitive(command, "c:\\program files (x86)\\steam") ||
+           steam_contains_case_insensitive(command, "steamwebhelper.exe") ||
+           steam_contains_case_insensitive(command, "steamwebhelper_real.exe") ||
+           steam_contains_case_insensitive(command, "c:\\windows\\system32\\explorer.exe /desktop") ||
+           (steam_contains_case_insensitive(command, "c:\\windows\\system32\\conhost.exe") &&
+            steam_contains_case_insensitive(command, "--headless")) ||
+           steam_contains_case_insensitive(command, "winedevice.exe") ||
+           steam_contains_case_insensitive(command, "wineserver") ||
+           steam_contains_case_insensitive(command, "wineloader");
+}
+
+static void steam_json_escape(char* output, size_t output_size, const char* input) {
+    size_t used = 0;
+    for (const unsigned char* p = (const unsigned char*)input; *p != '\0' && used + 2u < output_size; p++) {
+        if (*p == '"' || *p == '\\') {
+            output[used++] = '\\';
+            output[used++] = (char)*p;
+        } else if (*p == '\n' || *p == '\r' || *p == '\t') {
+            output[used++] = ' ';
+        } else if (*p >= 0x20) {
+            output[used++] = (char)*p;
+        }
+    }
+    output[used] = '\0';
 }
 
 static MetalsharpResponse* handle_steam_stop_targets(const HttpRequest* req) {
     (void)req;
-    /* Real implementation will enumerate running Wine
-     * prefixes tied to Steam appids and expose the killable
-     * pids here; the stub returns an empty list so the
-     * Electron shell sees a clean state. */
-    return make_data_response("{\"ok\":true,\"targets\":[]}");
+    char targeted[32768] = "";
+    char excluded[32768] = "";
+    size_t targeted_used = 0;
+    size_t excluded_used = 0;
+    unsigned int targeted_count = 0;
+    bool targeted_first = true;
+    bool excluded_first = true;
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL)
+        home = getenv("HOME");
+    if (home == NULL)
+        home = "";
+    char prefix[PATH_MAX];
+    snprintf(prefix, sizeof(prefix), "%s/prefix-steam", home);
+    FILE* processes = popen("ps axo pid=,command=", "r");
+    if (processes != NULL) {
+        char line[16384];
+        while (fgets(line, sizeof(line), processes) != NULL) {
+            char* cursor = line;
+            while (isspace((unsigned char)*cursor))
+                cursor++;
+            char* end = NULL;
+            unsigned long pid = strtoul(cursor, &end, 10);
+            if (end == cursor || pid == (unsigned long)getpid())
+                continue;
+            while (isspace((unsigned char)*end))
+                end++;
+            end[strcspn(end, "\r\n")] = '\0';
+            bool targeted_process = steam_cleanup_command(end, prefix);
+            bool excluded_process =
+                !targeted_process &&
+                (strstr(end, "Steam.app/Contents/MacOS") != NULL || strstr(end, "steam_osx") != NULL ||
+                 strstr(end, " rg ") != NULL || strstr(end, "rg -i") != NULL || strstr(end, "ps axo") != NULL);
+            if (!targeted_process && !excluded_process)
+                continue;
+            char escaped[24576];
+            steam_json_escape(escaped, sizeof(escaped), end);
+            char* destination = targeted_process ? targeted : excluded;
+            size_t* used = targeted_process ? &targeted_used : &excluded_used;
+            bool* first = targeted_process ? &targeted_first : &excluded_first;
+            size_t capacity = targeted_process ? sizeof(targeted) : sizeof(excluded);
+            int n = snprintf(destination + *used, capacity - *used, "%s{\"pid\":%lu,\"command\":\"%s\"}",
+                             *first ? "" : ",", pid, escaped);
+            if (n > 0 && (size_t)n < capacity - *used) {
+                *used += (size_t)n;
+                *first = false;
+                if (targeted_process)
+                    targeted_count++;
+            }
+        }
+        (void)pclose(processes);
+    }
+    char body[70000];
+    int n = snprintf(body, sizeof(body),
+                     "{\"ok\":true,\"targeted_pid_count\":%u,\"targeted\":[%s],\"excluded\":[%s],"
+                     "\"summary\":\"stop_wine_steam targets %u Wine Steam helper process(es); the macOS Steam "
+                     "client and MetalSharp's own rg/ps invocations are excluded\"}",
+                     targeted_count, targeted, excluded, targeted_count);
+    if (n < 0 || (size_t)n >= sizeof(body))
+        return make_error_response("process list too large");
+    return make_data_response(body);
 }
 
 /*
@@ -464,21 +611,54 @@ static MetalsharpResponse* handle_steam_save_api_key(const HttpRequest* req) {
         return make_error_response("invalid JSON body");
     }
     const char* key = json_get_string(json_object_get(parsed, "key"));
-    if (key == NULL) {
-        json_free(parsed);
-        return make_error_response("missing key field");
-    }
+    if (key == NULL)
+        key = "";
     char* key_dup = strdup(key);
     json_free(parsed);
     if (key_dup == NULL) {
         return make_error_response("out of memory");
     }
     bool ok = kv_put(g_steam_db, STEAM_API_KEY_KEY, key_dup);
-    free(key_dup);
     if (!ok) {
+        free(key_dup);
         return make_error_response("database write failed");
     }
-    return steam_ok_response();
+    size_t escaped_capacity = strlen(key_dup) * 6u + 1u;
+    char* escaped_key = malloc(escaped_capacity);
+    if (escaped_key != NULL)
+        steam_json_escape(escaped_key, escaped_capacity, key_dup);
+    bool api_key_set = key_dup[0] != '\0';
+    free(key_dup);
+    if (escaped_key == NULL)
+        return make_error_response("out of memory");
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL)
+        home = getenv("HOME");
+    if (home != NULL) {
+        char cache[PATH_MAX];
+        char config[PATH_MAX];
+        int cache_n = snprintf(cache, sizeof(cache), "%s/cache", home);
+        int config_n = snprintf(config, sizeof(config), "%s/cache/steam_config.json", home);
+        if (cache_n > 0 && (size_t)cache_n < sizeof(cache) && config_n > 0 && (size_t)config_n < sizeof(config)) {
+            (void)mkdir(cache, 0755);
+            FILE* file = fopen(config, "wb");
+            if (file != NULL) {
+                (void)fprintf(file, "{\n  \"steam_api_key\": \"%s\",\n  \"steam_id\": \"\"\n}\n", escaped_key);
+                fclose(file);
+            }
+        }
+    }
+    free(escaped_key);
+    char response_body[640];
+    int response_n = snprintf(response_body, sizeof(response_body),
+                              "{\"ok\":true,\"sync\":{\"api_key_set\":%s,\"owned_games_cache\":false,"
+                              "\"steam_id\":\"\",\"steam_id_detected\":false},\"library\":{\"ok\":true,"
+                              "\"games\":[],\"total\":0,\"installed_count\":0,\"sync\":{\"api_key_set\":%s,"
+                              "\"owned_games_cache\":false,\"steam_id\":\"\",\"steam_id_detected\":false}}}",
+                              api_key_set ? "true" : "false", api_key_set ? "true" : "false");
+    if (response_n < 0 || (size_t)response_n >= sizeof(response_body))
+        return make_error_response("internal error");
+    return make_data_response(response_body);
 }
 
 /*
@@ -577,7 +757,28 @@ static MetalsharpResponse* handle_steam_bridge_status(const HttpRequest* req) {
      * phase (idle/connecting/pumping) once the bridge
      * module lands; until then the route is "idle" so the
      * Electron shell sees a stable initial state. */
-    return make_data_response("{\"ok\":true,\"status\":\"idle\"}");
+    return make_data_response("{\"ok\":true,\"running\":false,\"port\":18733}");
+}
+
+static MetalsharpResponse* handle_steam_watch_steamapps(const HttpRequest* req) {
+    (void)req;
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL)
+        home = getenv("HOME");
+    if (home != NULL) {
+        char directory[PATH_MAX];
+        char cache[PATH_MAX];
+        int directory_n = snprintf(directory, sizeof(directory), "%s/cache", home);
+        int cache_n = snprintf(cache, sizeof(cache), "%s/cache/steam_appids.cache", home);
+        if (directory_n > 0 && (size_t)directory_n < sizeof(directory) && cache_n > 0 &&
+            (size_t)cache_n < sizeof(cache)) {
+            (void)mkdir(directory, 0755);
+            FILE* file = fopen(cache, "ab");
+            if (file != NULL)
+                fclose(file);
+        }
+    }
+    return make_data_response("{\"ok\":true,\"new_appids\":[]}");
 }
 
 /* ── Route registration ── */
@@ -612,7 +813,7 @@ void steam_register_routes(HttpServer* server, Database* db) {
     http_server_register(server, "POST", "/steam/install-game", handle_steam_stub_ok);
     http_server_register(server, "POST", "/steam/stop", handle_steam_stub_ok);
     http_server_register(server, "POST", "/steam/compatdata", handle_steam_stub_ok);
-    http_server_register(server, "GET", "/steam/watch-steamapps", handle_steam_stub_ok);
+    http_server_register(server, "GET", "/steam/watch-steamapps", handle_steam_watch_steamapps);
     http_server_register(server, "POST", "/steam/bridge-start", handle_steam_stub_ok);
     http_server_register(server, "POST", "/steam/runtime-doctor", handle_steam_stub_ok);
     http_server_register(server, "POST", "/steam/d3d12-runtime-doctor", handle_steam_stub_ok);

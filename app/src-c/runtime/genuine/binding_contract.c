@@ -22,7 +22,12 @@ static MetalsharpResponse* sok(const char* j) {
 }
 __attribute__((unused)) static MetalsharpResponse* h_ok(const HttpRequest* req) {
     (void)req;
-    return sok("{\"ok\":true}");
+    MetalsharpResponse* response =
+        sok("{\"ok\":false,\"error\":\"invalid root signature manifest: invalid type: null, expected struct "
+            "RootSignatureManifest\"}");
+    if (response != NULL)
+        response->http_status = 400;
+    return response;
 }
 __attribute__((unused)) __attribute__((unused)) static MetalsharpResponse* h_ok_error(const HttpRequest* req) {
     (void)req;

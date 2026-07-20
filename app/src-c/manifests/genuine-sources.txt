@@ -2,7 +2,9 @@ runtime/genuine/arena.c
 runtime/genuine/binding_contract.c
 runtime/genuine/bottles_backend.c
 runtime/genuine/command_contract.c
+runtime/genuine/compat_log.c
 runtime/genuine/config_parser.c
+runtime/genuine/crash_reports.c
 runtime/genuine/d3d12_doctor.c
 runtime/genuine/d3dmetal_gptk.c
 runtime/genuine/database.c
@@ -16,6 +18,7 @@ runtime/genuine/kt_anti_debug.c
 runtime/genuine/kt_apc.c
 runtime/genuine/kt_code_integrity.c
 runtime/genuine/kt_driver_model.c
+runtime/genuine/kt_empty_compat.c
 runtime/genuine/kt_es_bridge.c
 runtime/genuine/kt_es_live.c
 runtime/genuine/kt_handle_bridge.c
@@ -40,6 +43,7 @@ runtime/genuine/platform.c
 runtime/genuine/routes.c
 runtime/genuine/scan.c
 runtime/genuine/setup.c
+runtime/genuine/setup_worker.c
 runtime/genuine/sharp_library.c
 runtime/genuine/steam.c
 runtime/genuine/updater.c

@@ -198,6 +198,7 @@ static MetalsharpResponse* make_data_response(const char* body) {
     }
     r->ok = true;
     r->data = val;
+    r->data_kind = METALSHARP_RESPONSE_JSON_VALUE;
     return r;
 }
 

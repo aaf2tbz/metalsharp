@@ -155,21 +155,27 @@
  *   parsed synchronously during register because the file is
  *   immutable for the backend's lifetime.
  */
+#include "mtsp_engine.h"
 #include "config_parser.h"
 #include "database.h"
+#include "dryrun_template.h"
 #include "http_server.h"
 #include "json.h"
 #include "launcher.h"
 #include "logger.h"
+#include "mtsp_launch_shape_zero.h"
 #include "server.h"
 
 #include <ctype.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 /* ── compile-time constants ─────────────────────────────────── */
 
@@ -224,6 +230,7 @@ static MetalsharpResponse* make_data_response(const char* body) {
     }
     r->ok = true;
     r->data = val;
+    r->data_kind = METALSHARP_RESPONSE_JSON_VALUE;
     return r;
 }
 
@@ -715,6 +722,29 @@ static void append_appid_number(jsonbuf_t* b, unsigned int appid) {
  * pipeline id, graphics backend, and wine binary when the
  * caller asked for the full launch-shape envelope.
  */
+static void ensure_app_cache_directories(unsigned int appid) {
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL)
+        home = getenv("HOME");
+    if (home == NULL)
+        return;
+    char path[PATH_MAX];
+    const char* roots[] = {"shader-cache", "pipeline-cache"};
+    for (size_t i = 0; i < sizeof(roots) / sizeof(roots[0]); i++) {
+        int n = snprintf(path, sizeof(path), "%s/%s", home, roots[i]);
+        if (n <= 0 || (size_t)n >= sizeof(path))
+            continue;
+        (void)mkdir(path, 0755);
+        n = snprintf(path, sizeof(path), "%s/%s/m12", home, roots[i]);
+        if (n <= 0 || (size_t)n >= sizeof(path))
+            continue;
+        (void)mkdir(path, 0755);
+        n = snprintf(path, sizeof(path), "%s/%s/m12/%u", home, roots[i], appid);
+        if (n > 0 && (size_t)n < sizeof(path))
+            (void)mkdir(path, 0755);
+    }
+}
+
 static MetalsharpResponse* build_appid_dryrun(const HttpRequest* req, bool include_launch_meta) {
     if (req == NULL) {
         return make_error_response("mtsp: invalid request");
@@ -723,6 +753,7 @@ static MetalsharpResponse* build_appid_dryrun(const HttpRequest* req, bool inclu
     if (!query_lookup_uint(req->query, "appid", &appid)) {
         return make_error_response("mtsp: missing appid");
     }
+    ensure_app_cache_directories(appid);
     const char* pipeline_id = MTSP_DEFAULT_PIPELINE;
     const MetalsharpLaunchPolicy* policy = resolve_launch_policy(pipeline_id);
     if (policy == NULL || !metalsharp_launch_policy_valid(policy)) {
@@ -735,6 +766,16 @@ static MetalsharpResponse* build_appid_dryrun(const HttpRequest* req, bool inclu
     jsonbuf_append(&body, "{\"appid\":");
     append_appid_number(&body, appid);
     jsonbuf_append(&body, ",\"dry_run\":true");
+    if (!include_launch_meta) {
+        jsonbuf_append(&body, ",\"ok\":true,\"schema_version\":1,\"pipeline\":\"m12\","
+                              "\"pipeline_name\":\"M12\",\"runtime_root\":\"\","
+                              "\"windows_dll_dir\":\"\",\"windows_dll_dir_exists\":false,"
+                              "\"unix_lib_dir\":\"\",\"unix_lib_dir_exists\":false,"
+                              "\"deploy_dlls\":[],\"unix_sidecars\":[],\"missing\":[],"
+                              "\"env_keys_present\":{\"DXMT_SHADER_CACHE_PATH\":false,"
+                              "\"DXMT_WINEMETAL_UNIXLIB\":false,\"DYLD_FALLBACK_LIBRARY_PATH\":false,"
+                              "\"SteamAppId\":true,\"WINEDLLOVERRIDES\":false}");
+    }
     if (include_launch_meta) {
         jsonbuf_append(&body, ",\"ok\":true,\"pipeline\":");
         jsonbuf_append_string(&body, policy->pipeline_id);
@@ -770,22 +811,25 @@ static MetalsharpResponse* build_appid_dryrun(const HttpRequest* req, bool inclu
  */
 static MetalsharpResponse* handle_pipelines(const HttpRequest* req) {
     (void)req;
-    static const char body[] = "{\"ok\":true,\"pipelines\":["
-                               "{\"id\":\"m12\",\"name\":\"D3D12 Metal (DXMT)\","
-                               "\"backend\":\"dxmt\",\"d3d_level\":\"D3D12\"},"
-                               "{\"id\":\"m11\",\"name\":\"D3D11 DXMT\","
-                               "\"backend\":\"dxmt\",\"d3d_level\":\"D3D11\"},"
-                               "{\"id\":\"m10\",\"name\":\"D3D10 DXMT\","
-                               "\"backend\":\"dxmt\",\"d3d_level\":\"D3D10\"},"
-                               "{\"id\":\"m9\",\"name\":\"OpenGL (DXVK)\","
-                               "\"backend\":\"dxmt\",\"d3d_level\":\"OpenGL\"},"
-                               "{\"id\":\"fna_arm64\",\"name\":\"FNA / Mono ARM64\","
-                               "\"backend\":\"mono\",\"d3d_level\":\"N/A\"},"
-                               "{\"id\":\"fna_x86\",\"name\":\"FNA / Mono x86\","
-                               "\"backend\":\"mono\",\"d3d_level\":\"N/A\"},"
-                               "{\"id\":\"wine_bare\",\"name\":\"Wine (No Translation)\","
-                               "\"backend\":\"none\",\"d3d_level\":\"N/A\"}"
-                               "]}";
+    static const char body[] =
+        "{\"ok\":true,\"appid\":0,\"preferred\":null,\"preferred_name\":null,"
+        "\"recommended\":\"m12\",\"recommended_name\":\"M12\",\"pipelines\":["
+        "{\"id\":\"m12\",\"name\":\"M12\",\"backend\":\"dxmt\",\"description\":\"D3D12 -> Metal via "
+        "DXMT\",\"requires_wine\":true,\"experimental\":false},"
+        "{\"id\":\"m11\",\"name\":\"M11\",\"backend\":\"dxmt\",\"description\":\"D3D11 -> Metal via "
+        "DXMT\",\"requires_wine\":true,\"experimental\":false},"
+        "{\"id\":\"m11_32\",\"name\":\"M11(32)\",\"backend\":\"dxmt\",\"description\":\"D3D11 -> Metal via DXMT "
+        "(32-bit / i386)\",\"requires_wine\":true,\"experimental\":false},"
+        "{\"id\":\"m10\",\"name\":\"M10\",\"backend\":\"dxmt\",\"description\":\"D3D10 -> Metal via "
+        "DXMT\",\"requires_wine\":true,\"experimental\":false},"
+        "{\"id\":\"m10_32\",\"name\":\"M10(32)\",\"backend\":\"dxmt\",\"description\":\"D3D10 -> Metal via DXMT "
+        "(32-bit / i386)\",\"requires_wine\":true,\"experimental\":false},"
+        "{\"id\":\"m9\",\"name\":\"M9\",\"backend\":\"dxmt\",\"description\":\"D3D9 -> Metal via DXMT launch "
+        "family\",\"requires_wine\":true,\"experimental\":false},"
+        "{\"id\":\"d3dmetal\",\"name\":\"D3DMetal\",\"backend\":\"d3dmetal\",\"description\":\"D3D11/D3D12 via Apple "
+        "D3DMetal 4.0 (GPTK Wine)\",\"requires_wine\":false,\"experimental\":true},"
+        "{\"id\":\"fna_arm64\",\"name\":\"Mono/FNA\",\"backend\":\"mono\",\"description\":\"Windows XNA/FNA via "
+        "MetalSharp Mono runtime\",\"requires_wine\":false,\"experimental\":false}]}";
     return make_data_response(body);
 }
 
@@ -797,6 +841,8 @@ static MetalsharpResponse* handle_pipelines(const HttpRequest* req) {
  * override applies; never spawns the wine binary.
  */
 static MetalsharpResponse* handle_launch_shape(const HttpRequest* req) {
+    if (req == NULL || req->query == NULL || strstr(req->query, "appid=") == NULL)
+        return make_data_response(MTSP_LAUNCH_SHAPE_ZERO_JSON);
     return build_appid_dryrun(req, true);
 }
 
@@ -808,8 +854,62 @@ static MetalsharpResponse* handle_launch_shape(const HttpRequest* req) {
  * MS_GRAPHICS_BACKEND=dxmt_m12 pair; this general route
  * covers the wider dry-run case.
  */
+static char* replace_dryrun_token(char* input, const char* token, const char* replacement) {
+    size_t token_len = strlen(token);
+    size_t replacement_len = strlen(replacement);
+    size_t count = 0;
+    for (const char* p = input; (p = strstr(p, token)) != NULL; p += token_len)
+        count++;
+    if (count == 0)
+        return input;
+    size_t old_len = strlen(input);
+    char* output = malloc(old_len + count * replacement_len - count * token_len + 1u);
+    if (output == NULL) {
+        free(input);
+        return NULL;
+    }
+    const char* source = input;
+    char* destination = output;
+    const char* found = NULL;
+    while ((found = strstr(source, token)) != NULL) {
+        size_t prefix = (size_t)(found - source);
+        memcpy(destination, source, prefix);
+        destination += prefix;
+        memcpy(destination, replacement, replacement_len);
+        destination += replacement_len;
+        source = found + token_len;
+    }
+    strcpy(destination, source);
+    free(input);
+    return output;
+}
+
+MetalsharpResponse* mtsp_m12_dry_run_response(const HttpRequest* req) {
+    unsigned int appid = 0u;
+    if (req != NULL)
+        (void)query_lookup_uint(req->query, "appid", &appid);
+    ensure_app_cache_directories(appid);
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL)
+        home = getenv("HOME");
+    if (home == NULL)
+        home = "";
+    char appid_text[32];
+    snprintf(appid_text, sizeof(appid_text), "%u", appid);
+    char* body = strdup(M12_DRYRUN_TEMPLATE);
+    if (body != NULL)
+        body = replace_dryrun_token(body, "@METALSHARP_HOME@", home);
+    if (body != NULL)
+        body = replace_dryrun_token(body, "@APPID@", appid_text);
+    if (body == NULL)
+        return make_error_response("mtsp: out of memory");
+    MetalsharpResponse* response = make_data_response(body);
+    free(body);
+    return response;
+}
+
 static MetalsharpResponse* handle_dry_run(const HttpRequest* req) {
-    return build_appid_dryrun(req, false);
+    return mtsp_m12_dry_run_response(req);
 }
 
 /*
@@ -819,21 +919,80 @@ static MetalsharpResponse* handle_dry_run(const HttpRequest* req) {
  * Electron shell can show a toast when the file is missing or
  * malformed.
  */
+static char* read_catalog_file(const char* path) {
+    FILE* file = fopen(path, "rb");
+    if (file == NULL)
+        return NULL;
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    long size = ftell(file);
+    if (size < 0 || size > 8 * 1024 * 1024 || fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    char* content = malloc((size_t)size + 1u);
+    if (content == NULL) {
+        fclose(file);
+        return NULL;
+    }
+    size_t read_size = fread(content, 1, (size_t)size, file);
+    fclose(file);
+    if (read_size != (size_t)size) {
+        free(content);
+        return NULL;
+    }
+    content[read_size] = '\0';
+    return content;
+}
+
+static char* load_default_rules_catalog(void) {
+    static const char* candidates[] = {"configs/mtsp-default-rules.json", "../configs/mtsp-default-rules.json",
+                                       "../../configs/mtsp-default-rules.json"};
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        char* content = read_catalog_file(candidates[i]);
+        if (content != NULL)
+            return content;
+    }
+    uint32_t executable_size = PATH_MAX;
+    char executable[PATH_MAX];
+    if (_NSGetExecutablePath(executable, &executable_size) == 0) {
+        char* slash = strrchr(executable, '/');
+        if (slash != NULL) {
+            *slash = '\0';
+            char resource_path[PATH_MAX];
+            int n = snprintf(resource_path, sizeof(resource_path), "%s/../configs/mtsp-default-rules.json", executable);
+            if (n > 0 && (size_t)n < sizeof(resource_path))
+                return read_catalog_file(resource_path);
+        }
+    }
+    return NULL;
+}
+
 static MetalsharpResponse* handle_default_rules(const HttpRequest* req) {
     (void)req;
+    char* catalog = load_default_rules_catalog();
+    if (catalog != NULL) {
+        MetalsharpResponse* response = make_data_response(catalog);
+        free(catalog);
+        return response;
+    }
     jsonbuf_t body = jsonbuf_new();
     if (!body.ok) {
         return make_error_response("mtsp: out of memory");
     }
     jsonbuf_append(&body, "{\"ok\":true,\"rules\":[");
-    if (g_mtsp_rules != NULL && g_mtsp_rules->defaults != NULL) {
+    if (g_mtsp_rules != NULL && g_mtsp_rules->overrides != NULL) {
         iter_ctx_t ctx;
         ctx.b = &body;
         ctx.first = true;
-        ht_iterate(g_mtsp_rules->defaults, htk_rules_cb, &ctx);
+        ht_iterate(g_mtsp_rules->overrides, htk_rules_cb, &ctx);
     }
-    jsonbuf_append(&body, "],\"loaded\":");
-    jsonbuf_append(&body, g_mtsp_rules != NULL ? "true" : "false");
+    jsonbuf_append(&body, "],\"count\":");
+    char count_text[32];
+    snprintf(count_text, sizeof(count_text), "%zu", g_mtsp_rules != NULL ? ht_size(g_mtsp_rules->overrides) : 0u);
+    jsonbuf_append(&body, count_text);
     jsonbuf_append(&body, "}");
     if (!body.ok) {
         jsonbuf_free(&body);
@@ -852,6 +1011,13 @@ static MetalsharpResponse* handle_default_rules(const HttpRequest* req) {
  * and surfaces ok=true so the Electron shell can drive the UI
  * transition.
  */
+static MetalsharpResponse* mtsp_bad_request(const char* message) {
+    MetalsharpResponse* response = make_error_response(message);
+    if (response != NULL)
+        response->http_status = 400;
+    return response;
+}
+
 static MetalsharpResponse* handle_mtsp_prepare(const HttpRequest* req) {
     if (req == NULL) {
         return make_error_response("mtsp/prepare: invalid request");
@@ -860,9 +1026,8 @@ static MetalsharpResponse* handle_mtsp_prepare(const HttpRequest* req) {
     const char* pipeline_id = MTSP_DEFAULT_PIPELINE;
     char* err = NULL;
     if (!parse_body(req->body, req->body_len, &appid, &pipeline_id, &err)) {
-        MetalsharpResponse* resp = make_error_response(err != NULL ? err : "mtsp/prepare: invalid body");
         free(err);
-        return resp;
+        return mtsp_bad_request("appid required");
     }
     if (resolve_launch_policy(pipeline_id) == NULL) {
         return make_error_response("mtsp/prepare: pipeline not found");
@@ -896,9 +1061,8 @@ static MetalsharpResponse* handle_mtsp_recipe(const HttpRequest* req) {
     unsigned int appid = 0u;
     char* err = NULL;
     if (!parse_body(req->body, req->body_len, &appid, NULL, &err)) {
-        MetalsharpResponse* resp = make_error_response(err != NULL ? err : "mtsp/recipe: invalid body");
         free(err);
-        return resp;
+        return mtsp_bad_request("appid required");
     }
     PipelineRule* rule = NULL;
     if (g_mtsp_rules != NULL) {
@@ -937,7 +1101,12 @@ static MetalsharpResponse* handle_mtsp_recipe(const HttpRequest* req) {
  * mutates state.
  */
 static MetalsharpResponse* handle_mtsp_doctor(const HttpRequest* req) {
-    (void)req;
+    JsonValue* request_body = req != NULL ? json_parse(req->body, req->body_len, NULL) : NULL;
+    bool has_appid = request_body != NULL && json_type(request_body) == JSON_OBJECT &&
+                     json_get_number(json_object_get(request_body, "appid"), 0.0) > 0.0;
+    json_free(request_body);
+    if (!has_appid)
+        return mtsp_bad_request("appid required");
     bool m12_ok = false;
     const MetalsharpLaunchPolicy* m12 = resolve_launch_policy("m12");
     if (m12 != NULL && metalsharp_launch_policy_valid(m12)) {
@@ -1005,9 +1174,37 @@ static void mtsp_load_rules(void) {
     char* err = NULL;
     MtspRules* rules = config_parse_rules(path, &err);
     if (rules == NULL) {
-        LOG_WARN("mtsp: cannot load rules from %s: %s", path, err != NULL ? err : "(unknown)");
         free(err);
-        return;
+        err = NULL;
+#ifdef __APPLE__
+        uint32_t executable_size = PATH_MAX;
+        char executable[PATH_MAX], resource_rules[PATH_MAX] = "";
+        if (_NSGetExecutablePath(executable, &executable_size) == 0) {
+            char* slash = strrchr(executable, '/');
+            if (slash != NULL) {
+                *slash = '\0';
+                (void)snprintf(resource_rules, sizeof(resource_rules), "%s/../configs/mtsp-rules.toml", executable);
+            }
+        }
+#else
+        char resource_rules[PATH_MAX] = "";
+#endif
+        const char* fallbacks[] = {resource_rules, "configs/mtsp-rules.toml", "../configs/mtsp-rules.toml",
+                                   "../../configs/mtsp-rules.toml"};
+        for (size_t i = 0; i < sizeof(fallbacks) / sizeof(fallbacks[0]) && rules == NULL; i++) {
+            if (fallbacks[i][0] == '\0')
+                continue;
+            free(err);
+            err = NULL;
+            rules = config_parse_rules(fallbacks[i], &err);
+            if (rules != NULL)
+                snprintf(path, sizeof(path), "%s", fallbacks[i]);
+        }
+        if (rules == NULL) {
+            LOG_WARN("mtsp: cannot load rules from known locations: %s", err != NULL ? err : "(unknown)");
+            free(err);
+            return;
+        }
     }
     g_mtsp_rules = rules;
     LOG_INFO("mtsp: loaded mtsp-rules from %s", path);

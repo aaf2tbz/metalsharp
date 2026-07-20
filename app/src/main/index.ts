@@ -1147,7 +1147,19 @@ function registerIpc() {
   });
 
   ipcMain.handle("migrate:progress", async () => {
-    if (isUiOnlyRuntime()) return { ok: true, phase: "complete", percent: 100 };
+    if (isUiOnlyRuntime()) {
+      return {
+        ok: true,
+        status: "complete",
+        phase: "complete",
+        percent: 100,
+        step: 1,
+        total: 1,
+        message: "Migration complete",
+        error: "",
+        version: app.getVersion(),
+      };
+    }
     return requestMigrationBackend("GET", "/update/migrate/progress");
   });
 

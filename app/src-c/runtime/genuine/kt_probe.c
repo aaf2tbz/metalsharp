@@ -22,7 +22,13 @@ static MetalsharpResponse* sok(const char* j) {
 }
 __attribute__((unused)) static MetalsharpResponse* h_ok(const HttpRequest* req) {
     (void)req;
-    return sok("{\"ok\":true}");
+    return sok("{\"magic\":\"MSAB\",\"managed_runtime_env\":[\"METALSHARP_MONO_LIB\","
+               "\"METALSHARP_MONO_ROOT\",\"METALSHARP_MONO_ASSEMBLY_DIR\","
+               "\"METALSHARP_MONO_CONFIG_DIR\"],\"ok\":true,\"services\":[\"process\","
+               "\"paths\",\"logging\",\"steam\",\"graphics\",\"audio\",\"input\","
+               "\"managed_runtime\"],\"steam_bridge\":{\"active_port\":18733,"
+               "\"default_port\":18733,\"env\":\"METALSHARP_STEAM_BRIDGE_PORT\"},"
+               "\"version\":{\"major\":1,\"minor\":0}}");
 }
 __attribute__((unused)) __attribute__((unused)) static MetalsharpResponse* h_ok_error(const HttpRequest* req) {
     (void)req;

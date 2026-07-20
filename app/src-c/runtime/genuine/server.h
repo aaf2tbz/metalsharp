@@ -91,10 +91,20 @@ typedef enum {
  * response after serialization. data is an opaque pointer whose
  * concrete type is determined by the handler.
  */
+typedef enum {
+    METALSHARP_RESPONSE_JSON_TEXT = 0,
+    METALSHARP_RESPONSE_JSON_VALUE,
+    METALSHARP_RESPONSE_RAW,
+} MetalsharpResponseDataKind;
+
 typedef struct {
     bool ok;
     char* error_msg;
     void* data;
+    MetalsharpResponseDataKind data_kind;
+    size_t data_length; /* RAW byte length; ignored for JSON */
+    char* content_type; /* optional heap-owned MIME type */
+    int http_status;    /* 0 means HTTP 200 */
 } MetalsharpResponse;
 
 /*

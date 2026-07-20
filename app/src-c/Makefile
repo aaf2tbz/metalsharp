@@ -12,7 +12,9 @@ LAUNCH_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_b
 MIGRATION_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.08.rcgu.c
 AGILITY_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.05.rcgu.c
 BOTTLE_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.01.rcgu.c
-RUNTIME_OBJS := $(patsubst ./runtime/c/%.c,build/runtime/%.o,$(RUNTIME_SRCS))
+LEGACY_RUNTIME_OBJS := $(patsubst ./runtime/c/%.c,build/runtime/%.o,$(RUNTIME_SRCS))
+GENUINE_SRCS := $(shell awk '{print $$0}' manifests/genuine-sources.txt)
+GENUINE_OBJS := $(patsubst runtime/genuine/%.c,build/genuine/%.o,$(GENUINE_SRCS))
 TEST_OBJS := $(patsubst ./tests/c/%.c,build/tests/%.o,$(TEST_SRCS))
 MAINTAINED_OBJS := $(patsubst ./%.c,build/maintained/%.o,$(MAINTAINED_SRCS))
 INSTALLER_TEST := $(OUT_DIR)/metalsharp-installer-tests
@@ -27,9 +29,12 @@ LDFLAGS := -arch arm64 -mmacosx-version-min=$(DEPLOYMENT_TARGET) -isysroot $(SDK
   -Wl,-dead_strip -lobjc -framework Foundation -framework Security \
   -framework CoreFoundation -liconv -lc -lm
 BACKEND := $(OUT_DIR)/metalsharp-backend
+LEGACY_BACKEND := ../build/c-backend-legacy/metalsharp-backend
 TEST_BIN := $(OUT_DIR)/metalsharp-backend-tests
+DEPFLAGS := -MMD -MP
+OBJECT_DEPS := $(GENUINE_OBJS:.o=.d) $(MAINTAINED_OBJS:.o=.d) $(LEGACY_RUNTIME_OBJS:.o=.d) $(TEST_OBJS:.o=.d)
 
-.PHONY: integrity backend graphics-archive-contract test-binary installer-test surface-test policy-test bottle-deployment-test test smoke contract verify clean
+.PHONY: integrity backend legacy-backend parity-report parity electron-flow graphics-archive-contract test-binary installer-test surface-test policy-test bottle-deployment-test test smoke contract verify genuine-verify clean
 integrity:
 	@test "$$(wc -l < manifests/runtime-sources.txt | tr -d ' ')" = 374
 	@test "$$(wc -l < manifests/test-sources.txt | tr -d ' ')" = 394
@@ -68,9 +73,24 @@ graphics-archive-contract: $(BACKEND)
 
 test-binary: $(TEST_BIN)
 
-$(BACKEND): $(RUNTIME_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS)
+$(BACKEND): $(GENUINE_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS)
 	@mkdir -p $(dir $@)
-	$(CC) $(RUNTIME_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS) $(LDFLAGS) -o $@
+	$(CC) $(GENUINE_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS) $(LDFLAGS) -o $@
+
+legacy-backend: $(LEGACY_BACKEND)
+
+parity-report: $(LEGACY_BACKEND) $(BACKEND)
+	python3 "$(CURDIR)/../../tools/contracts/diff-electron-backends.py" "$(CURDIR)/$(LEGACY_BACKEND)" "$(CURDIR)/$(BACKEND)" --report "$(CURDIR)/../../PLAN/electron-backend-parity-report.json"
+
+parity: $(LEGACY_BACKEND) $(BACKEND)
+	python3 "$(CURDIR)/../../tools/contracts/diff-electron-backends.py" "$(CURDIR)/$(LEGACY_BACKEND)" "$(CURDIR)/$(BACKEND)" --strict
+
+electron-flow: $(BACKEND)
+	python3 "$(CURDIR)/../../tools/contracts/test-electron-critical-flows.py" "$(CURDIR)/$(BACKEND)"
+
+$(LEGACY_BACKEND): $(LEGACY_RUNTIME_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS)
+	@mkdir -p $(dir $@)
+	$(CC) $(LEGACY_RUNTIME_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS) $(LDFLAGS) -o $@
 
 $(TEST_BIN): $(TEST_OBJS) $(NATIVE_OBJS)
 	@mkdir -p $(dir $@)
@@ -78,11 +98,15 @@ $(TEST_BIN): $(TEST_OBJS) $(NATIVE_OBJS)
 
 build/runtime/%.o: runtime/c/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+build/genuine/%.o: runtime/genuine/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -I runtime/genuine -I . -c $< -o $@
 
 build/maintained/%.o: %.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 $(INSTALLER_TEST): bottles.c bottles.h installer.c installer.h launcher.c launcher.h runtime_surface.c runtime_surface.h tests/installer_test.c
 	@mkdir -p $(dir $@)
@@ -114,7 +138,7 @@ bottle-deployment-test: $(BOTTLE_DEPLOYMENT_TEST) $(DXMT_SURFACE_TEST)
 
 build/tests/%.o: tests/c/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 test: $(TEST_BIN)
 	"$(CURDIR)/../../tools/c-backend/run-tests.sh" "$(CURDIR)/$(TEST_BIN)" "$(CURDIR)"
@@ -122,38 +146,21 @@ test: $(TEST_BIN)
 smoke: $(BACKEND)
 	"$(CURDIR)/../../tools/c-backend/soak.sh" "$(CURDIR)/$(BACKEND)"
 
-verify: integrity backend graphics-archive-contract installer-test surface-test policy-test bottle-deployment-test contract
-
-# ── Genuine-C backend (hand-written C11, replaces transpiled .rcgu.c) ──
-# This target replaces the transpiled backend build. The output binary
-# path is identical to $(BACKEND) so all downstream targets (contract,
-# conformance, soak) operate on the genuine-C backend without changes.
-GENUINE_SRCS := $(shell cat manifests/genuine-sources.txt)
-GENUINE_OBJS := $(patsubst runtime/genuine/%.c,build/genuine/%.o,$(GENUINE_SRCS))
-
-# When `make backend` is invoked, build from the genuine sources instead
-# of the transpiled runtime/c/*.rcgu.c files. Override RUNTIME_OBJS before
-# the $(BACKEND) target is evaluated.
-RUNTIME_OBJS := $(GENUINE_OBJS)
-
-backend: $(BACKEND)
-
-$(BACKEND): $(GENUINE_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS)
-	@mkdir -p $(dir $@)
-	$(CC) $(GENUINE_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS) $(LDFLAGS) -o $@
-
-build/genuine/%.o: runtime/genuine/%.c
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -I runtime/genuine -I . -c $< -o $@
-
+# The hand-written C backend is the production backend. The transpiled
+# runtime remains available only through `make legacy-backend` as a local
+# behavioral oracle while drop-in parity is being verified.
 contract: $(BACKEND)
 	python3 "$(CURDIR)/../../tools/contracts/validate-electron-backend-contract.py"
+	python3 "$(CURDIR)/../../tools/contracts/validate-genuine-route-inventory.py"
 	python3 "$(CURDIR)/../../tools/contracts/run-electron-backend-conformance.py" "$(CURDIR)/$(BACKEND)"
+	python3 "$(CURDIR)/../../tools/contracts/test-electron-critical-flows.py" "$(CURDIR)/$(BACKEND)"
 
-verify: integrity backend graphics-archive-contract installer-test surface-test policy-test bottle-deployment-test contract
+verify: integrity backend graphics-archive-contract installer-test surface-test policy-test bottle-deployment-test test smoke contract
 
 genuine-verify: backend contract
 	@echo "Genuine-C backend verified: binary builds and passes contract conformance"
 
 clean:
 	rm -rf build $(OUT_DIR)
+
+-include $(OBJECT_DEPS)

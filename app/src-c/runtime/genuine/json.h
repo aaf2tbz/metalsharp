@@ -138,11 +138,33 @@ JsonValue* json_array_get(const JsonValue* value, size_t index);
 JsonValue* json_object_get(const JsonValue* value, const char* key);
 
 /*
+ * Replace or append an object member with a deep copy of value. Duplicate
+ * occurrences of key are collapsed so subsequent serialization remains a
+ * canonical object. Returns false on invalid input or allocation failure.
+ */
+bool json_object_set_clone(JsonValue* object, const char* key, const JsonValue* value);
+
+/* Mutable-tree helpers. The *_owned functions consume value on success and
+ * leave ownership with the caller on failure. */
+JsonValue* json_new_null(void);
+JsonValue* json_new_bool(bool value);
+JsonValue* json_new_number(double value);
+JsonValue* json_new_string(const char* value);
+JsonValue* json_new_array(void);
+JsonValue* json_new_object(void);
+JsonValue* json_clone(const JsonValue* value);
+bool json_array_append_owned(JsonValue* array, JsonValue* value);
+bool json_array_remove(JsonValue* array, size_t index);
+bool json_object_set_owned(JsonValue* object, const char* key, JsonValue* value);
+bool json_object_remove(JsonValue* object, const char* key);
+
+/*
  * Serialize a value to a heap-allocated, NUL-terminated JSON
  * document. Returns NULL on allocation failure. The caller frees
  * the returned buffer with the standard library free. Passing NULL
  * serializes as the literal JSON null.
  */
 char* json_serialize(const JsonValue* value);
+char* json_serialize_pretty(const JsonValue* value);
 
 #endif /* METALSHARP_JSON_H */

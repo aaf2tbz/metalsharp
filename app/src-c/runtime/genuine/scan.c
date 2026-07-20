@@ -6,6 +6,7 @@
  * EXPORTS  scan_register_routes
  * SCHEMA  Routes return valid JSON stubs. Real implementations deferred.
  */
+#include "compat_log.h"
 #include "database.h"
 #include "http_server.h"
 #include "server.h"
@@ -22,7 +23,12 @@ static MetalsharpResponse* sok(const char* j) {
 }
 __attribute__((unused)) static MetalsharpResponse* h_ok(const HttpRequest* req) {
     (void)req;
-    return sok("{\"ok\":true}");
+    metalsharp_app_log("Scanning for installed games...");
+    return sok("{\"ok\":true,\"data\":{\"games\":[],\"steam\":{"
+               "\"installed\":false,\"running\":false,\"installing\":false,\"path\":null,"
+               "\"metalsharp_wine_available\":false,\"mac_installed\":false,\"mac_running\":false,"
+               "\"mac_path\":null,\"mac_install_url\":\"https://store.steampowered.com/about/\","
+               "\"login_state\":{\"state\":\"unknown\",\"account\":null}}}}");
 }
 __attribute__((unused)) __attribute__((unused)) static MetalsharpResponse* h_ok_error(const HttpRequest* req) {
     (void)req;

@@ -28,15 +28,20 @@
  * a minimal valid JSON response to pass contract conformance.
  * Full implementations will be added in subsequent phases.
  */
+#include "compat_log.h"
+#include "crash_reports.h"
 #include "database.h"
 #include "http_server.h"
 #include "json.h"
 #include "logger.h"
+#include "mtsp_engine.h"
 #include "server.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /* ── Forward declarations for backend modules ── */
@@ -76,17 +81,18 @@ extern void kt_thread_notify_register_routes(HttpServer* s, Database* db);
 
 static MetalsharpResponse* handle_status(const HttpRequest* req) {
     (void)req;
+    metalsharp_app_log("Backend status checked");
 
     char body[1024];
     int written = snprintf(body, sizeof(body),
                            "{"
                            "\"ok\":true,"
                            "\"version\":\"%s\","
-                           "\"contract_version\":\"1\","
                            "\"pid\":%d,"
+                           "\"dev_mode\":%s,"
                            "\"metalsharp_home\":\"%s\""
                            "}",
-                           METALSHARP_VERSION, (int)getpid(),
+                           METALSHARP_VERSION, (int)getpid(), getenv("METALSHARP_DEV") != NULL ? "true" : "false",
                            getenv("METALSHARP_HOME") != NULL ? getenv("METALSHARP_HOME")
                            : getenv("HOME") != NULL          ? getenv("HOME")
                                                              : "");
@@ -139,6 +145,132 @@ static MetalsharpResponse* stub_ok_error(const HttpRequest* req) {
 static MetalsharpResponse* stub_devicename(const HttpRequest* req) {
     (void)req;
     return stub_ok_with("{\"ok\":true,\"name\":\"\"}");
+}
+
+static _Atomic bool g_graphics_runtime_logs = false;
+static Database* g_routes_db = NULL;
+
+typedef struct {
+    bool found;
+    bool enabled;
+} ConfigRead;
+
+static int config_read_cb(void* raw, int ncols, char** values, char** names) {
+    (void)names;
+    ConfigRead* result = raw;
+    if (result != NULL && ncols >= 1 && values != NULL && values[0] != NULL) {
+        result->found = true;
+        result->enabled = strcmp(values[0], "1") == 0;
+    }
+    return 0;
+}
+
+static void load_graphics_runtime_logs(void) {
+    if (g_routes_db == NULL)
+        return;
+    ConfigRead result = {false, false};
+    char* error = NULL;
+    if (db_query(g_routes_db, "SELECT value FROM app_config WHERE key='graphics_runtime_logs'", config_read_cb, &result,
+                 &error) &&
+        result.found)
+        atomic_store(&g_graphics_runtime_logs, result.enabled);
+    free(error);
+}
+
+static void save_graphics_runtime_logs(void) {
+    if (g_routes_db == NULL)
+        return;
+    const char* sql = atomic_load(&g_graphics_runtime_logs)
+                          ? "INSERT OR REPLACE INTO app_config(key,value) VALUES('graphics_runtime_logs','1')"
+                          : "INSERT OR REPLACE INTO app_config(key,value) VALUES('graphics_runtime_logs','0')";
+    char* error = NULL;
+    if (!db_exec(g_routes_db, sql, &error))
+        LOG_WARN("could not persist graphics runtime logging: %s", error != NULL ? error : "unknown error");
+    free(error);
+}
+
+static unsigned long query_appid(const HttpRequest* req) {
+    if (req == NULL || req->query == NULL)
+        return 0;
+    const char* value = strstr(req->query, "appid=");
+    return value != NULL ? strtoul(value + 6, NULL, 10) : 0;
+}
+
+static MetalsharpResponse* handle_goldberg_status(const HttpRequest* req) {
+    char body[256];
+    snprintf(body, sizeof(body),
+             "{\"ok\":true,\"appid\":%lu,\"pipeline\":\"m12\",\"goldberg_active\":false,"
+             "\"persisted_active\":false,\"cache_files\":[],\"cache_files_ok\":false,"
+             "\"backed_up_at\":null}",
+             query_appid(req));
+    return stub_ok_with(body);
+}
+
+static MetalsharpResponse* handle_goldberg_toggle(const HttpRequest* req) {
+    JsonValue* body = req != NULL ? json_parse(req->body, req->body_len, NULL) : NULL;
+    bool has_appid =
+        body != NULL && json_type(body) == JSON_OBJECT && json_get_number(json_object_get(body, "appid"), 0.0) > 0.0;
+    json_free(body);
+    MetalsharpResponse* r = calloc(1, sizeof(MetalsharpResponse));
+    if (r != NULL) {
+        r->ok = false;
+        r->error_msg = strdup(has_appid ? "game directory not found" : "appid required");
+        if (!has_appid)
+            r->http_status = 400;
+    }
+    return r;
+}
+
+static MetalsharpResponse* handle_config(const HttpRequest* req) {
+    if (req != NULL && strcmp(req->method, "POST") == 0 && req->body != NULL) {
+        JsonValue* body = json_parse(req->body, req->body_len, NULL);
+        if (body == NULL || json_type(body) != JSON_OBJECT) {
+            json_free(body);
+            MetalsharpResponse* r = calloc(1, sizeof(MetalsharpResponse));
+            if (r != NULL) {
+                r->ok = false;
+                r->error_msg = strdup("invalid JSON body");
+            }
+            return r;
+        }
+        JsonValue* enabled = json_object_get(body, "graphicsRuntimeLogs");
+        if (enabled == NULL)
+            enabled = json_object_get(body, "graphics_runtime_logs");
+        if (enabled == NULL)
+            enabled = json_object_get(body, "logs");
+        bool current = atomic_load(&g_graphics_runtime_logs);
+        atomic_store(&g_graphics_runtime_logs, json_get_bool(enabled, current));
+        char* serialized = json_serialize(body);
+        json_free(body);
+        const char* home = getenv("METALSHARP_HOME");
+        if (home == NULL)
+            home = getenv("HOME");
+        if (home != NULL && serialized != NULL) {
+            char directory[PATH_MAX];
+            char path[PATH_MAX];
+            int directory_n = snprintf(directory, sizeof(directory), "%s/configs", home);
+            int path_n = snprintf(path, sizeof(path), "%s/configs/config.json", home);
+            if (directory_n > 0 && (size_t)directory_n < sizeof(directory) && path_n > 0 &&
+                (size_t)path_n < sizeof(path)) {
+                (void)mkdir(directory, 0755);
+                FILE* file = fopen(path, "wb");
+                if (file != NULL) {
+                    (void)fwrite(serialized, 1, strlen(serialized), file);
+                    (void)fputc('\n', file);
+                    fclose(file);
+                }
+            }
+        }
+        free(serialized);
+        save_graphics_runtime_logs();
+    }
+    char response[192];
+    snprintf(response, sizeof(response),
+             "{\"ok\":true,\"native_available\":false,\"mono_available\":false,"
+             "\"graphicsRuntimeLogs\":%s,\"graphics_runtime_logs\":%s}",
+             atomic_load(&g_graphics_runtime_logs) ? "true" : "false",
+             atomic_load(&g_graphics_runtime_logs) ? "true" : "false");
+    return stub_ok_with(response);
 }
 
 static MetalsharpResponse* stub_steam_status(const HttpRequest* req) {
@@ -204,19 +336,53 @@ static MetalsharpResponse* stub_migration_report(const HttpRequest* req) {
                         "\"version\":\"\"}");
 }
 
+static void ensure_logs_directory(void) {
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL)
+        home = getenv("HOME");
+    if (home == NULL)
+        return;
+    char path[PATH_MAX];
+    int n = snprintf(path, sizeof(path), "%s/logs", home);
+    if (n > 0 && (size_t)n < sizeof(path))
+        (void)mkdir(path, 0755);
+}
+
 static MetalsharpResponse* stub_logs(const HttpRequest* req) {
     (void)req;
-    return stub_ok_with("{\"ok\":true,\"logs\":[]}");
+    ensure_logs_directory();
+    char* body = metalsharp_log_list_json();
+    if (body == NULL)
+        return NULL;
+    MetalsharpResponse* response = stub_ok_with(body);
+    free(body);
+    return response;
 }
 
 static MetalsharpResponse* stub_crash(const HttpRequest* req) {
     (void)req;
-    return stub_ok_with("{\"ok\":true,\"reports\":[]}");
+    char* body = metalsharp_crash_reports_json();
+    if (body == NULL)
+        return NULL;
+    MetalsharpResponse* response = stub_ok_with(body);
+    free(body);
+    return response;
 }
 
 static MetalsharpResponse* stub_logstream(const HttpRequest* req) {
-    (void)req;
-    return stub_ok_with("{\"ok\":true,\"lines\":[],\"total\":0}");
+    ensure_logs_directory();
+    size_t after = 0;
+    if (req != NULL && req->query != NULL) {
+        const char* value = strstr(req->query, "after=");
+        if (value != NULL)
+            after = (size_t)strtoull(value + 6, NULL, 10);
+    }
+    char* body = metalsharp_log_stream_json(after);
+    if (body == NULL)
+        return NULL;
+    MetalsharpResponse* response = stub_ok_with(body);
+    free(body);
+    return response;
 }
 
 static MetalsharpResponse* stub_pipeline_dryrun(const HttpRequest* req) {
@@ -225,19 +391,27 @@ static MetalsharpResponse* stub_pipeline_dryrun(const HttpRequest* req) {
 }
 
 static MetalsharpResponse* stub_m12_dryrun(const HttpRequest* req) {
-    (void)req;
-    return stub_ok_with("{\"appid\":0,\"dry_run\":true,"
-                        "\"env_pairs\":[{\"key\":\"MS_GRAPHICS_BACKEND\","
-                        "\"value\":\"dxmt_m12\"}]}");
+    return mtsp_m12_dry_run_response(req);
 }
 
 /* ── Route registration ── */
 
 void metalsharp_register_routes(HttpServer* server, Database* db) {
-    (void)db;
+    g_routes_db = db;
+    char* config_error = NULL;
+    if (!db_exec(db, "CREATE TABLE IF NOT EXISTS app_config(key TEXT PRIMARY KEY NOT NULL,value TEXT NOT NULL)",
+                 &config_error))
+        LOG_WARN("could not create app_config: %s", config_error != NULL ? config_error : "unknown error");
+    free(config_error);
+    load_graphics_runtime_logs();
 
     /* /status */
     http_server_register(server, "GET", "/status", handle_status);
+
+    http_server_register(server, "GET", "/config", handle_config);
+    http_server_register(server, "POST", "/config", handle_config);
+    http_server_register(server, "GET", "/goldberg/status", handle_goldberg_status);
+    http_server_register(server, "POST", "/goldberg/toggle", handle_goldberg_toggle);
 
     /* /setup */
     http_server_register(server, "GET", "/setup/state", stub_setup_state);
@@ -285,7 +459,6 @@ void metalsharp_register_routes(HttpServer* server, Database* db) {
     launch_register_routes(server, db);
     mtsp_register_routes(server, db);
     updater_register_routes(server, db);
-    installer_backend_register_routes(server, db);
     diagnostics_register_routes(server, db);
     metalfx_register_routes(server, db);
     fna_profile_register_routes(server, db);

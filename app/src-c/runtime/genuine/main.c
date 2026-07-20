@@ -24,6 +24,7 @@
  *   register_routes → http_server_run. On SIGINT/SIGTERM, sets
  *   shutdown flag; http_server_run returns, cleanup runs, exit(0).
  */
+#include "compat_log.h"
 #include "database.h"
 #include "http_server.h"
 #include "logger.h"
@@ -65,7 +66,7 @@ static const char* home_from_env(void) {
 static int port_from_env(void) {
     const char* val = getenv("METALSHARP_PORT");
     if (val == NULL || val[0] == '\0')
-        return 0; /* OS-assigned */
+        return 9274;
     long port = 0;
     char* end = NULL;
     port = strtol(val, &end, 10);
@@ -142,12 +143,13 @@ int main(int argc, char** argv) {
 
     /* Register all 264 routes (routes.c). */
     metalsharp_register_routes(srv, db);
+    metalsharp_app_log("MetalSharp v%s backend started on 127.0.0.1:%d", METALSHARP_VERSION, port);
 
     /* Signal handlers for graceful shutdown. */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = on_signal;
-    sa.sa_flags = SA_RESTART;
+    sa.sa_flags = 0;
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
     signal(SIGPIPE, SIG_IGN);

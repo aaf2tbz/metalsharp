@@ -16,6 +16,7 @@
     "c:build": "make -C src-c backend",
     "c:test": "make -C src-c test",
     "build:all": "npm run c:build && npm run build",
+    "test:backend-bridge": "npm run build:all && node scripts/test-backend-bridge.js",
     "build:native": "bash ../scripts/tools/native/build-helper.sh",
     "pack": "npm run build:all && electron-builder --dir",
     "prepare:native": "../tools/package/prepare-native-placeholders.sh",

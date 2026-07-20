@@ -21,8 +21,9 @@ static MetalsharpResponse* sok(const char* j) {
     return r;
 }
 __attribute__((unused)) static MetalsharpResponse* h_ok(const HttpRequest* req) {
-    (void)req;
-    return sok("{\"ok\":true}");
+    if (req != NULL && strcmp(req->path, "/d3dmetal/bottles/save") == 0)
+        return sok("{\"ok\":false,\"error\":\"appid required\"}");
+    return sok("{\"ok\":false,\"error\":\"appid or bottleId required\"}");
 }
 __attribute__((unused)) __attribute__((unused)) static MetalsharpResponse* h_ok_error(const HttpRequest* req) {
     (void)req;

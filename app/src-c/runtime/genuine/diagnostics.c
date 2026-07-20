@@ -72,6 +72,7 @@
  */
 
 #include "database.h"
+#include "diagnostics_empty_state.h"
 #include "http_server.h"
 #include "json.h"
 #include "logger.h"
@@ -122,7 +123,41 @@ static MetalsharpResponse* make_data_response(const char* body) {
     }
     r->ok = true;
     r->data = val;
+    r->data_kind = METALSHARP_RESPONSE_JSON_VALUE;
     return r;
+}
+
+static MetalsharpResponse* make_template_response(const char* template) {
+    static const char token[] = "@HOME@";
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL)
+        home = getenv("HOME");
+    if (home == NULL)
+        home = "";
+    size_t token_length = sizeof(token) - 1u;
+    size_t home_length = strlen(home);
+    size_t count = 0;
+    for (const char* cursor = template; (cursor = strstr(cursor, token)) != NULL; cursor += token_length)
+        count++;
+    size_t output_length = strlen(template) + count * home_length - count * token_length;
+    char* output = malloc(output_length + 1u);
+    if (output == NULL)
+        return NULL;
+    const char* source = template;
+    char* destination = output;
+    const char* match = NULL;
+    while ((match = strstr(source, token)) != NULL) {
+        size_t prefix_length = (size_t)(match - source);
+        memcpy(destination, source, prefix_length);
+        destination += prefix_length;
+        memcpy(destination, home, home_length);
+        destination += home_length;
+        source = match + token_length;
+    }
+    strcpy(destination, source);
+    MetalsharpResponse* response = make_data_response(output);
+    free(output);
+    return response;
 }
 
 /* ── Route handlers ── */
@@ -135,8 +170,7 @@ static MetalsharpResponse* make_data_response(const char* body) {
  */
 static MetalsharpResponse* handle_diag_launch(const HttpRequest* req) {
     (void)req;
-    return make_data_response("{\"ok\":true,\"launched\":false,"
-                              "\"appid\":0,\"engine\":\"\",\"pipeline\":\"\"}");
+    return make_template_response(DIAG_DIAGNOSTICS_LAUNCH_JSON);
 }
 
 /*
@@ -147,8 +181,7 @@ static MetalsharpResponse* handle_diag_launch(const HttpRequest* req) {
  */
 static MetalsharpResponse* handle_diag_launch_timing(const HttpRequest* req) {
     (void)req;
-    return make_data_response("{\"ok\":true,\"samples\":[],"
-                              "\"count\":0,\"average_ms\":0.0}");
+    return make_template_response(DIAG_DIAGNOSTICS_LAUNCH_TIMING_JSON);
 }
 
 /*
@@ -159,8 +192,7 @@ static MetalsharpResponse* handle_diag_launch_timing(const HttpRequest* req) {
  */
 static MetalsharpResponse* handle_diag_runtime_artifacts(const HttpRequest* req) {
     (void)req;
-    return make_data_response("{\"ok\":true,\"artifacts\":[],"
-                              "\"directories\":[]}");
+    return make_template_response(DIAG_DIAGNOSTICS_RUNTIME_ARTIFACTS_JSON);
 }
 
 /*
@@ -170,8 +202,7 @@ static MetalsharpResponse* handle_diag_runtime_artifacts(const HttpRequest* req)
  */
 static MetalsharpResponse* handle_diag_wineboot_state(const HttpRequest* req) {
     (void)req;
-    return make_data_response("{\"ok\":true,\"state\":\"unknown\","
-                              "\"last_boot\":0,\"prefix\":\"\"}");
+    return make_template_response(DIAG_DIAGNOSTICS_WINEBOOT_STATE_JSON);
 }
 
 /*
@@ -182,7 +213,7 @@ static MetalsharpResponse* handle_diag_wineboot_state(const HttpRequest* req) {
  */
 static MetalsharpResponse* handle_diag_pso_manifests(const HttpRequest* req) {
     (void)req;
-    return make_data_response("{\"ok\":true,\"manifests\":[],\"stale\":[]}");
+    return make_template_response(DIAG_DIAGNOSTICS_PSO_MANIFESTS_JSON);
 }
 
 /*
@@ -194,8 +225,7 @@ static MetalsharpResponse* handle_diag_pso_manifests(const HttpRequest* req) {
  */
 static MetalsharpResponse* handle_diag_cache_doctor(const HttpRequest* req) {
     (void)req;
-    return make_data_response("{\"ok\":true,\"healthy\":true,"
-                              "\"issues\":[],\"bytes\":0}");
+    return make_template_response(DIAG_DIAGNOSTICS_CACHE_DOCTOR_JSON);
 }
 
 /*
@@ -207,7 +237,10 @@ static MetalsharpResponse* handle_diag_cache_doctor(const HttpRequest* req) {
  */
 static MetalsharpResponse* handle_diag_binding_contract_validate(const HttpRequest* req) {
     (void)req;
-    return make_data_response("{\"ok\":true,\"errors\":[],\"warnings\":[]}");
+    MetalsharpResponse* response = make_template_response(DIAG_DIAGNOSTICS_BINDING_CONTRACT_VALIDATE_JSON);
+    if (response != NULL)
+        response->http_status = 400;
+    return response;
 }
 
 /*
@@ -218,7 +251,7 @@ static MetalsharpResponse* handle_diag_binding_contract_validate(const HttpReque
  */
 static MetalsharpResponse* handle_diag_command_replay_validate(const HttpRequest* req) {
     (void)req;
-    return make_data_response("{\"ok\":true,\"valid\":true,\"issues\":[]}");
+    return make_template_response(DIAG_DIAGNOSTICS_COMMAND_REPLAY_VALIDATE_JSON);
 }
 
 /* ── Route registration ── */
