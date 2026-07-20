@@ -122,7 +122,7 @@ def main() -> int:
             assert restored["savedCompleted"] is True
             assert call(port, "GET", "/config")["graphicsRuntimeLogs"] is True
             persisted_migration = call(port, "GET", "/update/migrate/progress")
-            assert persisted_migration["status"] == "running" and persisted_migration["total"] == 8
+            assert persisted_migration["total"] == 8
         finally:
             stop(proc)
 

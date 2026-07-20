@@ -163,6 +163,7 @@ static MetalsharpResponse* handle_sharp_library_gog_status(const HttpRequest* re
 static MetalsharpResponse* handle_sharp_library_gog_games(const HttpRequest* req);
 static MetalsharpResponse* handle_sharp_library_gog_initialize_prefix(const HttpRequest* req);
 static MetalsharpResponse* handle_sharp_library_gog_auth_code(const HttpRequest* req);
+static MetalsharpResponse* handle_sharp_library_gog_sync(const HttpRequest* req);
 static MetalsharpResponse* handle_sharp_library_gog_logout(const HttpRequest* req);
 static MetalsharpResponse* handle_sharp_library_gog_remove_prefix(const HttpRequest* req);
 static MetalsharpResponse* handle_sharp_library_gog_play(const HttpRequest* req);
@@ -1951,6 +1952,8 @@ static bool gog_run_capture(char* const argv[], const char* config, const char* 
     return true;
 }
 
+static char* gog_curl_json(const char* url, const char* token);
+static bool gog_read_access_token(char* token, size_t token_size);
 static char* gog_status_json(void) {
     MetalsharpResponse* response = gog_status_response(false);
     if (response == NULL)
@@ -2791,6 +2794,96 @@ static bool gog_find_game_folder(const char* root, const char* product_id, char*
     return found;
 }
 
+static void gog_update_from_metadata(JsonValue* game) {
+    const char* product_id = json_get_string(json_object_get(game, "productId"));
+    if (product_id == NULL || product_id[0] == '\0')
+        return;
+    /* Fetch product metadata from GOG API */
+    char url[512];
+    snprintf(url, sizeof(url), "https://api.gog.com/products/%s", product_id);
+    char* api_response = gog_curl_json(url, NULL);
+    if (api_response != NULL) {
+        JsonValue* meta = json_parse(api_response, strlen(api_response), NULL);
+        free(api_response);
+        if (meta != NULL && json_type(meta) == JSON_OBJECT) {
+            const char* title = json_get_string(json_object_get(meta, "title"));
+            if (title != NULL)
+                json_object_set_owned(game, "title", json_new_string(title));
+            const char* slug = json_get_string(json_object_get(meta, "slug"));
+            if (slug != NULL)
+                json_object_set_owned(game, "slug", json_new_string(slug));
+            JsonValue* images = json_object_get(meta, "images");
+            if (json_type(images) == JSON_OBJECT) {
+                const char* bg = json_get_string(json_object_get(images, "background"));
+                if (bg != NULL && bg[0] != '\0') {
+                    char normalized[1024];
+                    if (bg[0] == '/' && bg[1] == '/')
+                        snprintf(normalized, sizeof(normalized), "https:%s", bg);
+                    else
+                        snprintf(normalized, sizeof(normalized), "%s", bg);
+                    json_object_set_owned(game, "imageUrl", json_new_string(normalized));
+                }
+                const char* icon = json_get_string(json_object_get(images, "icon"));
+                if (icon != NULL && icon[0] != '\0') {
+                    char normalized[1024];
+                    if (icon[0] == '/' && icon[1] == '/')
+                        snprintf(normalized, sizeof(normalized), "https:%s", icon);
+                    else
+                        snprintf(normalized, sizeof(normalized), "%s", icon);
+                    json_object_set_owned(game, "iconUrl", json_new_string(normalized));
+                }
+            }
+            json_free(meta);
+        }
+        /* Also try gogdl info for size data */
+        char binary[PATH_MAX];
+        if (gog_find_binary(binary, sizeof(binary))) {
+            char config[PATH_MAX], support[PATH_MAX], auth_dir[PATH_MAX], auth_path[PATH_MAX];
+            gog_join(auth_dir, sizeof(auth_dir), gog_home(), "gog_store");
+            gog_join(auth_path, sizeof(auth_path), auth_dir, "auth.json");
+            gog_join(config, sizeof(config), gog_home(), "gogdl");
+            gog_join(support, sizeof(support), config, "gog-support");
+            char* argv[] = {binary, "--auth-config-path", auth_path, "info", product_id,
+                            "--platform", "windows", "--with-dlcs", NULL};
+            GogCommandOutput cmd;
+            char cmd_error[512];
+            if (gog_run_capture(argv, config, support, &cmd, cmd_error, sizeof(cmd_error)) &&
+                cmd.exit_code == 0 && cmd.stdout_text[0] != '\0') {
+                JsonValue* info = json_parse(cmd.stdout_text, strlen(cmd.stdout_text), NULL);
+                if (info != NULL) {
+                    JsonValue* sizes = json_object_get(info, "size");
+                    if (json_type(sizes) == JSON_OBJECT) {
+                        JsonValue* en_us = json_object_get(sizes, "en-US");
+                        if (json_type(en_us) == JSON_OBJECT) {
+                            double ds = json_get_number(json_object_get(en_us, "download_size"), 0.0);
+                            if (ds > 0.0)
+                                json_object_set_owned(game, "downloadSizeBytes", json_new_number(ds));
+                            double disk = json_get_number(json_object_get(en_us, "disk_size"), 0.0);
+                            if (disk > 0.0)
+                                json_object_set_owned(game, "diskSizeBytes", json_new_number(disk));
+                        }
+                    }
+                    const char* folder_name = json_get_string(json_object_get(info, "folder_name"));
+                    if (folder_name != NULL) {
+                        const char* current_title = json_get_string(json_object_get(game, "title"));
+                        if (current_title == NULL || strncmp(current_title, "GOG ", 4) == 0)
+                            json_object_set_owned(game, "title", json_new_string(folder_name));
+                    }
+                    json_free(info);
+                }
+            }
+        }
+    }
+    /* Fallback title */
+    const char* title = json_get_string(json_object_get(game, "title"));
+    if (title == NULL || title[0] == '\0' || strncmp(title, "GOG ", 4) == 0) {
+        char fallback[256];
+        snprintf(fallback, sizeof(fallback), "GOG %s", product_id);
+        json_object_set_owned(game, "title", json_new_string(fallback));
+    }
+    gog_refresh_game(game);
+}
+
 static void gog_refresh_game(JsonValue* game) {
     const char* product_id = json_get_string(json_object_get(game, "productId"));
     if (product_id == NULL || product_id[0] == '\0')
@@ -3317,6 +3410,161 @@ static MetalsharpResponse* handle_sharp_library_gog_uninstall(const HttpRequest*
  * uninstall / logout / sync / remove-prefix pipelines have been
  * ported from the legacy Node backend.
  */
+/* ── GOG sync ── */
+
+static char* gog_curl_json(const char* url, const char* token) {
+    char stdout_template[] = "/tmp/metalsharp-gog-curl-stdout-XXXXXX";
+    char stderr_template[] = "/tmp/metalsharp-gog-curl-stderr-XXXXXX";
+    int stdout_fd = mkstemp(stdout_template), stderr_fd = mkstemp(stderr_template);
+    if (stdout_fd < 0 || stderr_fd < 0) {
+        if (stdout_fd >= 0) { close(stdout_fd); unlink(stdout_template); }
+        if (stderr_fd >= 0) { close(stderr_fd); unlink(stderr_template); }
+        return NULL;
+    }
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(stdout_fd); close(stderr_fd);
+        unlink(stdout_template); unlink(stderr_template);
+        return NULL;
+    }
+    if (pid == 0) {
+        (void)dup2(stdout_fd, STDOUT_FILENO);
+        (void)dup2(stderr_fd, STDERR_FILENO);
+        close(stdout_fd); close(stderr_fd);
+        if (token != NULL && token[0] != '\0') {
+            char header[8192];
+            snprintf(header, sizeof(header), "Authorization: Bearer %s", token);
+            execl("/usr/bin/curl", "curl", "--fail", "--location", "--silent", "--show-error", "--header",
+                  header, url, (char*)NULL);
+        } else {
+            execl("/usr/bin/curl", "curl", "--fail", "--location", "--silent", "--show-error", url, (char*)NULL);
+        }
+        _exit(127);
+    }
+    close(stdout_fd); close(stderr_fd);
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        unlink(stdout_template); unlink(stderr_template);
+        return NULL;
+    }
+    char* result = gog_read_file(stdout_template);
+    unlink(stdout_template); unlink(stderr_template);
+    return result;
+}
+
+static bool gog_read_access_token(char* token, size_t token_size) {
+    char binary[PATH_MAX], auth_dir[PATH_MAX], auth_path[PATH_MAX], config[PATH_MAX], support[PATH_MAX];
+    if (!gog_find_binary(binary, sizeof(binary)))
+        return false;
+    gog_join(auth_dir, sizeof(auth_dir), gog_home(), "gog_store");
+    gog_join(auth_path, sizeof(auth_path), auth_dir, "auth.json");
+    gog_join(config, sizeof(config), gog_home(), "gogdl");
+    gog_join(support, sizeof(support), config, "gog-support");
+    if (!gog_mkdir_p(auth_dir) || !gog_mkdir_p(config) || !gog_mkdir_p(support))
+        return false;
+    char* argv[] = {binary, "--auth-config-path", auth_path, "auth", NULL};
+    GogCommandOutput command;
+    char command_error[512];
+    if (!gog_run_capture(argv, config, support, &command, command_error, sizeof(command_error)))
+        return false;
+    if (command.exit_code != 0 || command.stdout_text[0] == '\0')
+        return false;
+    JsonValue* credentials = json_parse(command.stdout_text, strlen(command.stdout_text), NULL);
+    if (credentials == NULL)
+        return false;
+    const char* access_token = json_get_string(json_object_get(credentials, "access_token"));
+    if (access_token == NULL || access_token[0] == '\0') {
+        json_free(credentials);
+        return false;
+    }
+    snprintf(token, token_size, "%s", access_token);
+    json_free(credentials);
+    return true;
+}
+
+static MetalsharpResponse* handle_sharp_library_gog_sync(const HttpRequest* req) {
+    (void)req;
+    if (!gog_auth_nonempty())
+        return gog_status_response(true);
+    char token[4096];
+    if (!gog_read_access_token(token, sizeof(token)))
+        return gog_status_response(true);
+    char* api_response = gog_curl_json("https://embed.gog.com/user/data/games", token);
+    if (api_response == NULL)
+        return gog_status_response(true);
+    JsonValue* parsed = json_parse(api_response, strlen(api_response), NULL);
+    free(api_response);
+    JsonValue* owned = json_object_get(parsed, "owned");
+    char library[PATH_MAX];
+    gog_join(library, sizeof(library), gog_home(), "gog/library.json");
+    char* cache_content = gog_read_file(library);
+    JsonValue* cache = cache_content != NULL ? json_parse(cache_content, strlen(cache_content), NULL) : NULL;
+    free(cache_content);
+    if (cache == NULL || json_type(cache) != JSON_OBJECT) {
+        json_free(cache);
+        cache = json_new_object();
+        json_object_set_owned(cache, "games", json_new_array());
+        json_object_set_owned(cache, "lastSyncAt", json_new_null());
+    }
+    JsonValue* games = json_object_get(cache, "games");
+    for (size_t i = 0u; i < json_array_length(owned); i++) {
+        JsonValue* id_value = json_array_get(owned, i);
+        const char* product_id = json_get_string(id_value);
+        if (product_id == NULL) {
+            double id_number = json_get_number(id_value, 0.0);
+            if (id_number > 0.0) {
+                char id_buf[64];
+                snprintf(id_buf, sizeof(id_buf), "%.0f", id_number);
+                product_id = id_buf;
+            }
+        }
+        if (product_id == NULL || product_id[0] == '\0')
+            continue;
+        bool found = false;
+        for (size_t j = 0u; j < json_array_length(games); j++) {
+            JsonValue* existing = json_array_get(games, j);
+            const char* existing_id = json_get_string(json_object_get(existing, "productId"));
+            if (existing_id != NULL && strcmp(existing_id, product_id) == 0) {
+                gog_update_from_metadata(existing);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            JsonValue* game = gog_new_game(product_id);
+            if (game != NULL && json_array_append_owned(games, game))
+                gog_update_from_metadata(game);
+            else
+                json_free(game);
+        }
+    }
+    json_object_set_owned(cache, "lastSyncAt", json_new_number((double)time(NULL)));
+    char* games_json = json_serialize(games);
+    JsonValue* last_sync = json_object_get(cache, "lastSyncAt");
+    char* last_sync_json = json_serialize(last_sync);
+    gog_save_cache(cache, library);
+    json_free(cache);
+    json_free(parsed);
+    if (games_json == NULL || last_sync_json == NULL) {
+        free(games_json); free(last_sync_json);
+        return gog_status_response(true);
+    }
+    char* status_json = gog_status_json();
+    jsonbuf_t body = jsonbuf_new();
+    (void)jsonbuf_append(&body, "{\"ok\":true,\"games\":");
+    (void)jsonbuf_append(&body, games_json);
+    (void)jsonbuf_append(&body, ",\"status\":");
+    (void)jsonbuf_append(&body, status_json != NULL ? status_json : "null");
+    (void)jsonbuf_append(&body, ",\"lastSyncAt\":");
+    (void)jsonbuf_append(&body, last_sync_json);
+    (void)jsonbuf_append(&body, "}");
+    free(games_json); free(last_sync_json); free(status_json);
+    MetalsharpResponse* response = body.ok ? make_data_response(body.data) : make_error_response("internal error");
+    jsonbuf_free(&body);
+    return response;
+}
+
 static MetalsharpResponse* handle_sharp_library_stub_ok(const HttpRequest* req) {
     if (req == NULL)
         return make_error_response("invalid request");
@@ -3335,8 +3583,6 @@ static MetalsharpResponse* handle_sharp_library_stub_ok(const HttpRequest* req) 
         return handle_sharp_library_gog_logout(req);
     if (strcmp(path, "/sharp-library/gog/remove-prefix") == 0)
         return handle_sharp_library_gog_remove_prefix(req);
-    if (strcmp(path, "/sharp-library/gog/sync") == 0)
-        return make_sharp_template_response(SHARP_SHARP_LIBRARY_GOG_SYNC_JSON);
     if (strcmp(path, "/sharp-library/gog/import") == 0 || strcmp(path, "/sharp-library/gog/install") == 0 ||
         strcmp(path, "/sharp-library/gog/progress") == 0 || strcmp(path, "/sharp-library/gog/stop") == 0 ||
         strcmp(path, "/sharp-library/gog/uninstall") == 0)
@@ -3405,7 +3651,7 @@ void sharp_library_register_routes(HttpServer* server, Database* db) {
     http_server_register(server, "POST", "/sharp-library/gog/stop", handle_sharp_library_gog_stop);
     http_server_register(server, "POST", "/sharp-library/gog/uninstall", handle_sharp_library_gog_uninstall);
     http_server_register(server, "POST", "/sharp-library/gog/logout", handle_sharp_library_gog_logout);
-    http_server_register(server, "POST", "/sharp-library/gog/sync", handle_sharp_library_stub_ok);
+    http_server_register(server, "POST", "/sharp-library/gog/sync", handle_sharp_library_gog_sync);
     http_server_register(server, "POST", "/sharp-library/gog/remove-prefix", handle_sharp_library_gog_remove_prefix);
 
     LOG_INFO("sharp-library routes registered (24)");
