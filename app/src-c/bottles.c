@@ -41,6 +41,14 @@ static const char* const m10_i386_artifacts[] = {
     "i386-windows/dxgi_dxmt.dll", "i386-windows/winemetal.dll", "i386-unix/winemetal.so",
 };
 
+static const char* const m9_artifacts[] = {
+    /* m9 uses Wine builtin d3d9.dll via DXVK+MoltenVK — no MetalSharp PE shims required */
+};
+
+static const char* const opengl_artifacts[] = {
+    "x86_64-windows/opengl32.dll",
+};
+
 #define POLICY(profile, pipeline, lane, arch, surface, manifest, files, d3d12)                                         \
     {profile, pipeline, lane, arch, surface, manifest, files, sizeof(files) / sizeof(files[0]), d3d12}
 
@@ -55,6 +63,10 @@ static const MetalsharpBottlePolicy policies[] = {
            METALSHARP_DXMT_LEGACY_MANIFEST_SHA256, m11_i386_artifacts, false),
     POLICY("m10_32", "m10_32", "dxmt", METALSHARP_BOTTLE_ARCH_I386, METALSHARP_DXMT_I386_SURFACE_ID,
            METALSHARP_DXMT_LEGACY_MANIFEST_SHA256, m10_i386_artifacts, false),
+    POLICY("m9", "m9", "dxvk", METALSHARP_BOTTLE_ARCH_X86_64, METALSHARP_DXMT_LEGACY_SURFACE_ID,
+           METALSHARP_DXMT_LEGACY_MANIFEST_SHA256, m9_artifacts, false),
+    POLICY("opengl", "opengl", "opengl", METALSHARP_BOTTLE_ARCH_X86_64, METALSHARP_DXMT_OPENGL_SURFACE_ID,
+           METALSHARP_DXMT_LEGACY_MANIFEST_SHA256, opengl_artifacts, false),
 };
 
 const MetalsharpBottlePolicy* metalsharp_bottle_policy(const char* profile_id) {
@@ -78,7 +90,10 @@ bool metalsharp_bottle_artifact_required(const MetalsharpBottlePolicy* policy, c
 bool metalsharp_bottle_policy_valid(const MetalsharpBottlePolicy* policy) {
     if (policy == NULL || policy->profile_id == NULL || policy->pipeline_id == NULL || policy->runtime_lane == NULL ||
         policy->surface_id == NULL || policy->manifest_sha256 == NULL || policy->artifacts == NULL ||
-        policy->artifact_count == 0 || strcmp(policy->profile_id, policy->pipeline_id) != 0)
+        strcmp(policy->profile_id, policy->pipeline_id) != 0)
+        return false;
+    if (policy->artifact_count == 0 && strcmp(policy->profile_id, "m9") != 0 &&
+        strcmp(policy->profile_id, "opengl") != 0)
         return false;
     const bool has_d3d12 = metalsharp_bottle_artifact_required(policy, "x86_64-windows/d3d12.dll");
     if (has_d3d12 != policy->includes_d3d12 || (policy->includes_d3d12 && strcmp(policy->profile_id, "m12") != 0))
@@ -91,6 +106,13 @@ bool metalsharp_bottle_policy_valid(const MetalsharpBottlePolicy* policy) {
         return strcmp(policy->runtime_lane, "dxmt") == 0 &&
                strcmp(policy->surface_id, METALSHARP_DXMT_I386_SURFACE_ID) == 0 &&
                strcmp(policy->manifest_sha256, METALSHARP_DXMT_LEGACY_MANIFEST_SHA256) == 0;
+    if (strcmp(policy->profile_id, "m9") == 0)
+        return strcmp(policy->runtime_lane, "dxvk") == 0 &&
+               strcmp(policy->surface_id, METALSHARP_DXMT_LEGACY_SURFACE_ID) == 0 &&
+               strcmp(policy->manifest_sha256, METALSHARP_DXMT_LEGACY_MANIFEST_SHA256) == 0;
+    if (strcmp(policy->profile_id, "opengl") == 0)
+        return strcmp(policy->runtime_lane, "opengl") == 0 &&
+               strcmp(policy->surface_id, METALSHARP_DXMT_OPENGL_SURFACE_ID) == 0;
     return strcmp(policy->runtime_lane, "dxmt") == 0 &&
            strcmp(policy->surface_id, METALSHARP_DXMT_LEGACY_SURFACE_ID) == 0 &&
            strcmp(policy->manifest_sha256, METALSHARP_DXMT_LEGACY_MANIFEST_SHA256) == 0;

@@ -6,7 +6,7 @@
 #include <string.h>
 
 int main(void) {
-    static const char* const profiles[] = {"m12", "m11", "m10", "m11_32", "m10_32"};
+    static const char* const profiles[] = {"m12", "m11", "m10", "m11_32", "m10_32", "m9", "opengl"};
     for (size_t i = 0; i < sizeof(profiles) / sizeof(profiles[0]); ++i) {
         const MetalsharpBottlePolicy* bottle = metalsharp_bottle_policy(profiles[i]);
         const MetalsharpLaunchPolicy* launch = metalsharp_launch_policy(profiles[i]);

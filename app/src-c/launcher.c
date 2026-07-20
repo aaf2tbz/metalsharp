@@ -71,6 +71,28 @@ static const MetalsharpLaunchPolicy policies[] = {
         true,
         true,
     },
+    {
+        "m9",
+        "bin/metalsharp-wine",
+        "dxvk",
+        "lib/wine/x86_64-windows:lib/dxvk/x86_64-windows",
+        "lib/wine/x86_64-unix",
+        NULL,
+        "d3d9,d3d10,d3d10_1,d3d10core,d3d11,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+        true,
+        true,
+    },
+    {
+        "opengl",
+        "bin/metalsharp-wine",
+        "opengl",
+        "lib/wine/x86_64-windows",
+        "lib/wine/x86_64-unix",
+        NULL,
+        "opengl32=n,b",
+        true,
+        true,
+    },
 };
 
 const MetalsharpLaunchPolicy* metalsharp_launch_policy(const char* pipeline_id) {
@@ -84,16 +106,29 @@ const MetalsharpLaunchPolicy* metalsharp_launch_policy(const char* pipeline_id) 
 
 bool metalsharp_launch_policy_valid(const MetalsharpLaunchPolicy* policy) {
     if (policy == NULL || metalsharp_bottle_policy(policy->pipeline_id) == NULL ||
-        strcmp(policy->wine_binary, "bin/metalsharp-wine") != 0 || strcmp(policy->graphics_backend, "dxmt") != 0 ||
-        strcmp(policy->winemetal_unixlib, "winemetal.so") != 0 || !policy->direct_executable ||
-        !policy->steam_background_client || policy->windows_dll_path == NULL || policy->unix_library_path == NULL ||
+        strcmp(policy->wine_binary, "bin/metalsharp-wine") != 0 ||
+        !policy->direct_executable || !policy->steam_background_client ||
+        policy->windows_dll_path == NULL || policy->unix_library_path == NULL ||
         policy->dll_overrides == NULL)
         return false;
-    if (strcmp(policy->pipeline_id, "m12") == 0)
-        return strstr(policy->windows_dll_path, "dxmt_m12/x86_64-windows") != NULL &&
+    if (policy->graphics_backend == NULL)
+        return false;
+    if (strcmp(policy->pipeline_id, "m12") == 0) {
+        return strcmp(policy->graphics_backend, "dxmt") == 0 &&
+               policy->winemetal_unixlib != NULL && strcmp(policy->winemetal_unixlib, "winemetal.so") == 0 &&
+               strstr(policy->windows_dll_path, "dxmt_m12/x86_64-windows") != NULL &&
                strstr(policy->unix_library_path, "dxmt_m12/x86_64-unix") != NULL &&
                strstr(policy->dll_overrides, "d3d12") != NULL;
-    return strstr(policy->dll_overrides, "d3d12") == NULL;
+    }
+    if (strcmp(policy->graphics_backend, "dxmt") == 0)
+        return policy->winemetal_unixlib != NULL && strcmp(policy->winemetal_unixlib, "winemetal.so") == 0 &&
+               strstr(policy->dll_overrides, "d3d12") == NULL;
+    if (strcmp(policy->graphics_backend, "dxvk") == 0)
+        return policy->winemetal_unixlib == NULL && strstr(policy->dll_overrides, "dxvk") == NULL &&
+               strstr(policy->dll_overrides, "d3d12") == NULL;
+    if (strcmp(policy->graphics_backend, "opengl") == 0)
+        return policy->winemetal_unixlib == NULL && strstr(policy->dll_overrides, "opengl32") != NULL;
+    return false;
 }
 
 bool metalsharp_launcher_reserved_env_key(const char* pipeline_id, const char* key) {
@@ -193,6 +228,8 @@ static bool receipt_has(const char* contents, char* expected, size_t size, const
 
 static const char* pipeline_id_for_code(unsigned char code) {
     switch (code) {
+    case 1:
+        return "m9";
     case 2:
         return "m10";
     case 3:
@@ -203,6 +240,8 @@ static const char* pipeline_id_for_code(unsigned char code) {
         return "m11_32";
     case 6:
         return "m12";
+    case 7:
+        return "opengl";
     default:
         return NULL;
     }
