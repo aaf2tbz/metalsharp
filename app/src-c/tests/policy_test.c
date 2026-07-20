@@ -6,14 +6,18 @@
 #include <string.h>
 
 int main(void) {
-    static const char* const profiles[] = {"m12", "m11", "m10", "m11_32", "m10_32", "m9", "opengl"};
-    for (size_t i = 0; i < sizeof(profiles) / sizeof(profiles[0]); ++i) {
-        const MetalsharpBottlePolicy* bottle = metalsharp_bottle_policy(profiles[i]);
-        const MetalsharpLaunchPolicy* launch = metalsharp_launch_policy(profiles[i]);
+    static const char* const dxmt_profiles[] = {"m12", "m11", "m10", "m11_32", "m10_32"};
+    static const char* const all_profiles[] = {"m12", "m11", "m10", "m11_32", "m10_32", "m9", "opengl"};
+    for (size_t i = 0; i < sizeof(all_profiles) / sizeof(all_profiles[0]); ++i) {
+        const MetalsharpBottlePolicy* bottle = metalsharp_bottle_policy(all_profiles[i]);
+        const MetalsharpLaunchPolicy* launch = metalsharp_launch_policy(all_profiles[i]);
         assert(metalsharp_bottle_policy_valid(bottle));
         assert(metalsharp_launch_policy_valid(launch));
         assert(strcmp(bottle->pipeline_id, launch->pipeline_id) == 0);
         assert(strcmp(launch->wine_binary, "bin/metalsharp-wine") == 0);
+    }
+    for (size_t i = 0; i < sizeof(dxmt_profiles) / sizeof(dxmt_profiles[0]); ++i) {
+        const MetalsharpLaunchPolicy* launch = metalsharp_launch_policy(dxmt_profiles[i]);
         assert(strcmp(launch->graphics_backend, "dxmt") == 0);
         assert(strcmp(launch->winemetal_unixlib, "winemetal.so") == 0);
     }
@@ -34,11 +38,11 @@ int main(void) {
     assert(metalsharp_launcher_reserved_env_key("m12", "DXMT_WINEMETAL_UNIXLIB"));
     assert(!metalsharp_launcher_reserved_env_key("m11", "MS_GRAPHICS_BACKEND"));
 
-    for (size_t i = 1; i < sizeof(profiles) / sizeof(profiles[0]); ++i) {
-        const MetalsharpBottlePolicy* bottle = metalsharp_bottle_policy(profiles[i]);
+    for (size_t i = 1; i < sizeof(dxmt_profiles) / sizeof(dxmt_profiles[0]); ++i) {
+        const MetalsharpBottlePolicy* bottle = metalsharp_bottle_policy(dxmt_profiles[i]);
         assert(!bottle->includes_d3d12);
         assert(!metalsharp_bottle_artifact_required(bottle, "x86_64-windows/d3d12.dll"));
-        assert(strstr(metalsharp_launch_policy(profiles[i])->dll_overrides, "d3d12") == NULL);
+        assert(strstr(metalsharp_launch_policy(dxmt_profiles[i])->dll_overrides, "d3d12") == NULL);
     }
 
     assert(strcmp(metalsharp_bottle_policy("m11_32")->surface_id, METALSHARP_DXMT_I386_SURFACE_ID) == 0);
