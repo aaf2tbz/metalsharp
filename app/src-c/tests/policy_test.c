@@ -26,7 +26,7 @@ int main(void) {
     assert(strcmp(m12_launch->windows_dll_path, "lib/dxmt_m12/x86_64-windows") == 0);
     assert(strcmp(m12_launch->unix_library_path, "lib/dxmt_m12/x86_64-unix:lib/wine/x86_64-unix") == 0);
     assert(strcmp(m12_launch->dll_overrides,
-                  "opengl32,winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d") ==
+                  "winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d") ==
            0);
     assert(m12_launch->direct_executable);
     assert(m12_launch->steam_background_client);

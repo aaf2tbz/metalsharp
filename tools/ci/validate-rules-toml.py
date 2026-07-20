@@ -65,7 +65,7 @@ M12_LAUNCH_CONTRACT = {
     "windows_dll_path": "lib/dxmt_m12/x86_64-windows",
     "unix_library_path": "lib/dxmt_m12/x86_64-unix:lib/wine/x86_64-unix",
     "dll_overrides": (
-        "opengl32,winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;"
+        "winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;"
         "gameoverlayrenderer,gameoverlayrenderer64=d"
     ),
     "steam_client": "background",
