@@ -92,6 +92,14 @@ def verify_archive(archive: Path, manifest_path: Path) -> None:
                 raise ValueError(f"surface {surface_id} has no artifacts or bundle roots")
 
             role = surface.get("role")
+            # The opengl-v1 surface is a metadata-only placeholder for the
+            # MetalSharp OpenGL bridge PE shim. Its artifacts are produced
+            # by src/opengl-pe-shim/Makefile and validated downstream, not
+            # by the dxmt graphics DLL bundle, so skip per-surface bundle
+            # verification and rely on the dedicated opengl-v1 validation
+            # block below.
+            if role == "opengl-v1":
+                continue
             runtime_lane = surface.get("runtime_lane")
             pipelines = set(surface.get("pipelines", []))
             if role == "legacy-v1" and pipelines != {"m10", "m11", "m10_32", "m11_32"}:
@@ -142,6 +150,33 @@ def verify_archive(archive: Path, manifest_path: Path) -> None:
                         )
 
             print(f"VERIFIED: {surface_id} roots={len(bundle_roots)} artifacts={len(artifacts)}")
+
+    # Validate the opengl-v1 surface metadata. Its presence and properties
+    # gate the OpenGL PE shim pipeline without a frozen graphics bundle.
+    opengl_surfaces = [
+        surface for surface in manifest["surfaces"] if surface.get("role") == "opengl-v1"
+    ]
+    if not opengl_surfaces:
+        raise ValueError("opengl-v1 surface must be declared in the DXMT surface manifest")
+    opengl_surface = opengl_surfaces[0]
+    expected_surface_id = "dxmt-opengl-preserved-v1-00000000-v1"
+    if opengl_surface.get("surface_id") != expected_surface_id:
+        raise ValueError(
+            f"opengl-v1 surface_id must be {expected_surface_id!r}, "
+            f"got {opengl_surface.get('surface_id')!r}"
+        )
+    required_platforms = {"x86_64-windows", "i386-windows", "x86_64-unix"}
+    declared_platforms = set(opengl_surface.get("platforms", []))
+    missing_platforms = sorted(required_platforms - declared_platforms)
+    if missing_platforms:
+        raise ValueError(
+            f"opengl-v1 surface {expected_surface_id} is missing required platforms: "
+            f"{missing_platforms}"
+        )
+    print(
+        f"VERIFIED: {expected_surface_id} role=opengl-v1 "
+        f"platforms={sorted(declared_platforms)}"
+    )
 
     print(f"VERIFIED: {manifest['surface_set_id']} archive={archive}")
 

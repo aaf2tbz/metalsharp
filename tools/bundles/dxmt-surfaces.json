@@ -40,6 +40,16 @@
       }
     },
     {
+      "surface_id": "dxmt-opengl-preserved-v1-00000000-v1",
+      "role": "opengl-v1",
+      "runtime_lane": "dxmt_opengl",
+      "pipelines": [],
+      "platforms": ["x86_64-windows", "i386-windows", "x86_64-unix"],
+      "bundle_roots": [],
+      "artifacts": {},
+      "description": "MetalSharp OpenGL bridge PE shim for Wine. Cross-compiled via mingw-w64, wrapped with winebuild --builtin. Forwards GL calls to macOS opengl32.dylib which routes through SPIRV-Cross/Metal pipeline."
+    },
+    {
       "surface_id": "metalsharp-dxmt-m12-pr230-v2",
       "role": "isolated-m12-v2",
       "runtime_lane": "dxmt_m12",

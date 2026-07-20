@@ -41,7 +41,7 @@ static const char* const m10_i386_artifacts[] = {
     "i386-windows/dxgi_dxmt.dll", "i386-windows/winemetal.dll", "i386-unix/winemetal.so",
 };
 
-#define POLICY(profile, pipeline, lane, arch, surface, manifest, files, d3d12)                                      \
+#define POLICY(profile, pipeline, lane, arch, surface, manifest, files, d3d12)                                         \
     {profile, pipeline, lane, arch, surface, manifest, files, sizeof(files) / sizeof(files[0]), d3d12}
 
 static const MetalsharpBottlePolicy policies[] = {
@@ -598,17 +598,16 @@ static bool write_m12_dry_run_receipt(const char* bottle_dir, const char* home, 
     FILE* file = fopen(temporary, "wb");
     if (file == NULL)
         return false;
-    const int result =
-        fprintf(file,
-                "{\n  \"schema\": \"metalsharp.m12-dry-run.v1\",\n  \"ok\": true,\n"
-                "  \"dry_run\": true,\n  \"appid\": %lu,\n  \"bottle_id\": \"%s\",\n"
-                "  \"pipeline\": \"m12\",\n  \"surface_id\": \"%s\",\n"
-                "  \"runtime_root\": \"%s\",\n  \"windows_dll_dir\": \"%s\",\n"
-                "  \"unix_lib_dir\": \"%s\",\n"
-                "  \"unix_sidecars\": [\"winemetal.so\", \"libc++.1.dylib\", \"libc++abi.1.dylib\", "
-                "\"libunwind.1.dylib\"],\n  \"status\": \"ready\"\n}\n",
-                manifest->has_steam_app_id ? manifest->steam_app_id : 0UL, manifest->id, policy->surface_id,
-                runtime_root, windows_dir, unix_dir);
+    const int result = fprintf(file,
+                               "{\n  \"schema\": \"metalsharp.m12-dry-run.v1\",\n  \"ok\": true,\n"
+                               "  \"dry_run\": true,\n  \"appid\": %lu,\n  \"bottle_id\": \"%s\",\n"
+                               "  \"pipeline\": \"m12\",\n  \"surface_id\": \"%s\",\n"
+                               "  \"runtime_root\": \"%s\",\n  \"windows_dll_dir\": \"%s\",\n"
+                               "  \"unix_lib_dir\": \"%s\",\n"
+                               "  \"unix_sidecars\": [\"winemetal.so\", \"libc++.1.dylib\", \"libc++abi.1.dylib\", "
+                               "\"libunwind.1.dylib\"],\n  \"status\": \"ready\"\n}\n",
+                               manifest->has_steam_app_id ? manifest->steam_app_id : 0UL, manifest->id,
+                               policy->surface_id, runtime_root, windows_dir, unix_dir);
     bool ok = result > 0 && fflush(file) == 0 && fsync(fileno(file)) == 0;
     if (fclose(file) != 0)
         ok = false;
