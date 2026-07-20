@@ -497,6 +497,55 @@ static size_t steam_scan_installed_appids(unsigned* appids, size_t capacity) {
         }
         closedir(games);
     }
+    /* Scan external Steam libraries from libraryfolders.vdf */
+    char vdf_path[PATH_MAX];
+    snprintf(vdf_path, sizeof(vdf_path),
+             "%s/prefix-steam/drive_c/Program Files (x86)/Steam/steamapps/libraryfolders.vdf", home);
+    FILE* vdf = fopen(vdf_path, "rb");
+    if (vdf != NULL) {
+        char line[4096];
+        while (fgets(line, sizeof(line), vdf) != NULL) {
+            char* path_start = strstr(line, "\"path\"");
+            if (path_start == NULL)
+                continue;
+            path_start = strchr(path_start + 6, '"');
+            if (path_start == NULL)
+                continue;
+            path_start++;
+            char* path_end = strchr(path_start, '"');
+            if (path_end == NULL)
+                continue;
+            *path_end = '\0';
+            /* Convert Windows path Z:\\foo\\bar -> /foo/bar */
+            char unix_path[PATH_MAX] = "";
+            const char* src = path_start;
+            if (src[0] == 'Z' && src[1] == ':')
+                src += 2;
+            size_t j = 0u;
+            for (; *src != '\0' && j < sizeof(unix_path) - 1u; src++) {
+                unix_path[j++] = (*src == '\\') ? '/' : *src;
+            }
+            unix_path[j] = '\0';
+            char external_steamapps[PATH_MAX];
+            snprintf(external_steamapps, sizeof(external_steamapps), "%s/steamapps", unix_path);
+            DIR* ext = opendir(external_steamapps);
+            if (ext != NULL) {
+                struct dirent* entry;
+                while ((entry = readdir(ext)) != NULL) {
+                    if (strncmp(entry->d_name, "appmanifest_", 12u) != 0)
+                        continue;
+                    size_t len = strlen(entry->d_name);
+                    if (len < 17u || strcmp(entry->d_name + len - 4u, ".acf") != 0)
+                        continue;
+                    unsigned id = (unsigned)strtoul(entry->d_name + 12u, NULL, 10);
+                    if (id > 0u && count < capacity && !steam_appid_in_array(id, appids, count))
+                        appids[count++] = id;
+                }
+                closedir(ext);
+            }
+        }
+        fclose(vdf);
+    }
     return count;
 }
 
@@ -571,7 +620,7 @@ static MetalsharpResponse* handle_steam_library(const HttpRequest* req) {
                     /* Scan for installed appids */
                     unsigned installed_ids[4096];
                     size_t scan_count = steam_scan_installed_appids(installed_ids, 4096u);
-                    int installed_total = 0;
+                    installed_total = 0;
                     /* Augment each game with frontend-required fields */
                     JsonValue* augmented = json_new_array();
                     for (int i = 0; i < total; i++) {
@@ -617,7 +666,7 @@ static MetalsharpResponse* handle_steam_library(const HttpRequest* req) {
     metalsharp_app_log("Loaded %d games", total);
     char body[131072];
     int n = snprintf(body, sizeof(body),
-                     "{\"ok\":true,\"games\":%s,\"total\":%d,\"installed_count\":0,"
+                     "{\"ok\":true,\"games\":%s,\"total\":%d,\"installed_count\":%d,"
                      "\"sync\":{\"api_key_set\":%s,\"owned_games_cache\":%s,"
                      "\"steam_id\":\"%s\",\"steam_id_detected\":%s}}",
                      games_json, total, installed_total, has_key ? "true" : "false", has_cache ? "true" : "false",
@@ -925,7 +974,7 @@ static MetalsharpResponse* handle_steam_save_api_key(const HttpRequest* req) {
     int response_n = snprintf(response_body, sizeof(response_body),
                               "{\"ok\":true,\"sync\":{\"api_key_set\":%s,\"owned_games_cache\":%s,"
                               "\"steam_id\":\"%s\",\"steam_id_detected\":%s},\"library\":{\"ok\":true,"
-                              "\"games\":[],\"total\":%d,\"installed_count\":0,\"sync\":{\"api_key_set\":%s,"
+                              "\"games\":[],\"total\":%d,\"installed_count\":%d,\"sync\":{\"api_key_set\":%s,"
                               "\"owned_games_cache\":%s,\"steam_id\":\"%s\",\"steam_id_detected\":%s}}}",
                               api_key_set ? "true" : "false", cache_exists_str,
                               has_steam_id ? steam_id : "", has_steam_id ? "true" : "false", games_count,
