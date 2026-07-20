@@ -397,6 +397,48 @@ static bool steam_installed(void) {
     return access(STEAM_APP_PATH, F_OK) == 0;
 }
 
+static bool steam_read_steam_id(char* output, size_t output_size) {
+    output[0] = '\0';
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL || home[0] == '\0')
+        home = getenv("HOME");
+    if (home == NULL)
+        return false;
+    char path[PATH_MAX];
+    static const char* relative[] = {
+        "prefix-steam/drive_c/Program Files (x86)/Steam/config/loginusers.vdf",
+        "Library/Application Support/Steam/config/loginusers.vdf",
+    };
+    for (size_t i = 0u; i < sizeof(relative) / sizeof(relative[0]); i++) {
+        int written = snprintf(path, sizeof(path), "%s/%s", home, relative[i]);
+        if (written < 0 || (size_t)written >= sizeof(path))
+            continue;
+        FILE* file = fopen(path, "rb");
+        if (file == NULL)
+            continue;
+        char line[256];
+        while (fgets(line, sizeof(line), file) != NULL) {
+            char* start = line;
+            while (isspace((unsigned char)*start))
+                start++;
+            if (*start != '"')
+                continue;
+            start++;
+            char* end = strchr(start, '"');
+            if (end == NULL)
+                continue;
+            *end = '\0';
+            if (strncmp(start, "7656", 4u) == 0) {
+                snprintf(output, output_size, "%s", start);
+                fclose(file);
+                return true;
+            }
+        }
+        fclose(file);
+    }
+    return false;
+}
+
 /* ── Route handlers ── */
 
 static MetalsharpResponse* handle_steam_status(const HttpRequest* req) {
@@ -424,15 +466,98 @@ static MetalsharpResponse* handle_steam_status(const HttpRequest* req) {
 static MetalsharpResponse* handle_steam_library(const HttpRequest* req) {
     (void)req;
     metalsharp_app_log("Loading Steam library...");
-    metalsharp_app_log("Loaded 0 games");
-    /* Real implementation will scan ~/Library/Application
-     * Support/Steam/steamapps for appmanifest_*.acf entries,
-     * parse each into a {appid,name,installed} record, and
-     * count the array. The stub returns an empty library so
-     * the Electron shell renders a clean "no games" state. */
-    return make_data_response("{\"ok\":true,\"games\":[],\"total\":0,\"installed_count\":0,"
-                              "\"sync\":{\"api_key_set\":false,\"owned_games_cache\":false,"
-                              "\"steam_id\":\"\",\"steam_id_detected\":false}}");
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL || home[0] == '\0')
+        home = getenv("HOME");
+    bool has_key = false;
+    bool has_cache = false;
+    char steam_id[64] = "";
+    char games_json[131072] = "[]";
+    int total = 0;
+    if (home != NULL) {
+        /* Read steam config for API key and SteamID */
+        char config_path[PATH_MAX];
+        snprintf(config_path, sizeof(config_path), "%s/cache/steam_config.json", home);
+        FILE* config_file = fopen(config_path, "rb");
+        if (config_file != NULL) {
+            char config_data[4096];
+            size_t config_len = fread(config_data, 1u, sizeof(config_data) - 1u, config_file);
+            config_data[config_len] = '\0';
+            fclose(config_file);
+            JsonValue* config = json_parse(config_data, config_len, NULL);
+            if (config != NULL && json_type(config) == JSON_OBJECT) {
+                const char* key = json_get_string(json_object_get(config, "steam_api_key"));
+                has_key = key != NULL && key[0] != '\0';
+                const char* sid = json_get_string(json_object_get(config, "steam_id"));
+                if (sid != NULL && sid[0] != '\0')
+                    snprintf(steam_id, sizeof(steam_id), "%s", sid);
+            }
+            json_free(config);
+        }
+        /* Read owned games cache */
+        char cache_path[PATH_MAX];
+        snprintf(cache_path, sizeof(cache_path), "%s/cache/owned_games.json", home);
+        FILE* cache_file = fopen(cache_path, "rb");
+        if (cache_file != NULL) {
+            size_t cache_len = fread(games_json, 1u, sizeof(games_json) - 1u, cache_file);
+            games_json[cache_len] = '\0';
+            fclose(cache_file);
+            has_cache = true;
+            JsonValue* cache = json_parse(games_json, cache_len, NULL);
+            if (cache != NULL && json_type(cache) == JSON_OBJECT) {
+                JsonValue* games = json_object_get(cache, "games");
+                if (json_type(games) == JSON_ARRAY) {
+                    total = (int)json_array_length(games);
+                    /* Augment each game with frontend-required fields */
+                    JsonValue* augmented = json_new_array();
+                    for (int i = 0; i < total; i++) {
+                        JsonValue* game = json_clone(json_array_get(games, (size_t)i));
+                        if (game != NULL && json_type(game) == JSON_OBJECT) {
+                            double appid = json_get_number(json_object_get(game, "appid"), 0.0);
+                            if (!json_object_get(game, "installed"))
+                                json_object_set_owned(game, "installed", json_new_bool(false));
+                            if (!json_object_get(game, "state"))
+                                json_object_set_owned(game, "state", json_new_string("not_installed"));
+                            if (!json_object_get(game, "cover_url")) {
+                                char cover[256];
+                                snprintf(cover, sizeof(cover),
+                                         "https://steamcdn-a.akamaihd.net/steam/apps/%.0f/library_600x900.jpg",
+                                         appid);
+                                json_object_set_owned(game, "cover_url", json_new_string(cover));
+                            }
+                            if (!json_object_get(game, "header_url")) {
+                                char header[256];
+                                snprintf(header, sizeof(header),
+                                         "https://steamcdn-a.akamaihd.net/steam/apps/%.0f/header.jpg", appid);
+                                json_object_set_owned(game, "header_url", json_new_string(header));
+                            }
+                            if (!json_object_get(game, "launch_method"))
+                                json_object_set_owned(game, "launch_method", json_new_string("auto"));
+                            json_array_append_owned(augmented, game);
+                        }
+                    }
+                    char* serialized = json_serialize(augmented);
+                    if (serialized != NULL) {
+                        snprintf(games_json, sizeof(games_json), "%s", serialized);
+                        free(serialized);
+                    }
+                    json_free(augmented);
+                }
+            }
+            json_free(cache);
+        }
+    }
+    metalsharp_app_log("Loaded %d games", total);
+    char body[131072];
+    int n = snprintf(body, sizeof(body),
+                     "{\"ok\":true,\"games\":%s,\"total\":%d,\"installed_count\":0,"
+                     "\"sync\":{\"api_key_set\":%s,\"owned_games_cache\":%s,"
+                     "\"steam_id\":\"%s\",\"steam_id_detected\":%s}}",
+                     games_json, total, has_key ? "true" : "false", has_cache ? "true" : "false",
+                     steam_id[0] != '\0' ? steam_id : "", steam_id[0] != '\0' ? "true" : "false");
+    if (n < 0 || (size_t)n >= sizeof(body))
+        return make_error_response("library too large");
+    return make_data_response(body);
 }
 
 static MetalsharpResponse* handle_steam_is_running(const HttpRequest* req) {
@@ -648,31 +773,97 @@ static MetalsharpResponse* handle_steam_save_api_key(const HttpRequest* req) {
     free(key_dup);
     if (escaped_key == NULL)
         return make_error_response("out of memory");
+    char steam_id[64];
+    bool has_steam_id = steam_read_steam_id(steam_id, sizeof(steam_id)) && steam_id[0] != '\0';
     const char* home = getenv("METALSHARP_HOME");
     if (home == NULL)
         home = getenv("HOME");
-    if (home != NULL) {
+
+    /* Fetch library from Steam API */
+    char games_json[131072] = "[]";
+    int games_count = 0;
+    if (api_key_set && has_steam_id) {
+        char url[1024];
+        int url_len = snprintf(url, sizeof(url),
+            "https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/"
+            "?key=%s&steamid=%s&include_appinfo=1&include_played_free_games=1&format=json",
+            escaped_key, steam_id);
+        if (url_len > 0 && (size_t)url_len < sizeof(url)) {
+            char stdout_tmp[] = "/tmp/metalsharp-steam-api-stdout-XXXXXX";
+            char stderr_tmp[] = "/tmp/metalsharp-steam-api-stderr-XXXXXX";
+            int stdout_fd = mkstemp(stdout_tmp), stderr_fd = mkstemp(stderr_tmp);
+            if (stdout_fd >= 0 && stderr_fd >= 0) {
+                pid_t pid = fork();
+                if (pid == 0) {
+                    (void)dup2(stdout_fd, STDOUT_FILENO);
+                    (void)dup2(stderr_fd, STDERR_FILENO);
+                    close(stdout_fd); close(stderr_fd);
+                    execl("/usr/bin/curl", "curl", "-sL", "-m", "15", url, (char*)NULL);
+                    _exit(127);
+                }
+                close(stdout_fd); close(stderr_fd);
+                int status = 0;
+                while (pid > 0 && waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+                if (pid > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+                    FILE* f = fopen(stdout_tmp, "rb");
+                    if (f != NULL) {
+                        size_t n = fread(games_json, 1u, sizeof(games_json) - 1u, f);
+                        games_json[n] = '\0';
+                        fclose(f);
+                        JsonValue* api_parsed = json_parse(games_json, n, NULL);
+                        JsonValue* api_resp = api_parsed != NULL ? json_object_get(api_parsed, "response") : NULL;
+                        JsonValue* games = api_resp != NULL ? json_object_get(api_resp, "games") : NULL;
+                        games_count = (int)json_array_length(games);
+                        if (home != NULL && games_count > 0) {
+                            char cache_path[PATH_MAX];
+                            snprintf(cache_path, sizeof(cache_path), "%s/cache/owned_games.json", home);
+                            char* games_only = json_serialize(games);
+                            if (games_only != NULL) {
+                                FILE* cache = fopen(cache_path, "wb");
+                                if (cache != NULL) {
+                                    fprintf(cache, "{\"timestamp\":%lld,\"games\":%s}\n",
+                                            (long long)time(NULL), games_only);
+                                    fclose(cache);
+                                }
+                                free(games_only);
+                            }
+                        }
+                        json_free(api_parsed);
+                    }
+                }
+                unlink(stdout_tmp); unlink(stderr_tmp);
+            }
+        }
+    }
+
+    const char* home_cfg = home != NULL ? home : "";
+    if (home_cfg[0] != '\0') {
         char cache[PATH_MAX];
         char config[PATH_MAX];
-        int cache_n = snprintf(cache, sizeof(cache), "%s/cache", home);
-        int config_n = snprintf(config, sizeof(config), "%s/cache/steam_config.json", home);
+        int cache_n = snprintf(cache, sizeof(cache), "%s/cache", home_cfg);
+        int config_n = snprintf(config, sizeof(config), "%s/cache/steam_config.json", home_cfg);
         if (cache_n > 0 && (size_t)cache_n < sizeof(cache) && config_n > 0 && (size_t)config_n < sizeof(config)) {
             (void)mkdir(cache, 0755);
             FILE* file = fopen(config, "wb");
             if (file != NULL) {
-                (void)fprintf(file, "{\n  \"steam_api_key\": \"%s\",\n  \"steam_id\": \"\"\n}\n", escaped_key);
+                (void)fprintf(file, "{\n  \"steam_api_key\": \"%s\",\n  \"steam_id\": \"%s\"\n}\n", escaped_key, steam_id);
                 fclose(file);
             }
         }
     }
     free(escaped_key);
-    char response_body[640];
+    char cache_exists_str[8];
+    snprintf(cache_exists_str, sizeof(cache_exists_str), "%s", games_count > 0 ? "true" : "false");
+    char response_body[2048];
     int response_n = snprintf(response_body, sizeof(response_body),
-                              "{\"ok\":true,\"sync\":{\"api_key_set\":%s,\"owned_games_cache\":false,"
-                              "\"steam_id\":\"\",\"steam_id_detected\":false},\"library\":{\"ok\":true,"
-                              "\"games\":[],\"total\":0,\"installed_count\":0,\"sync\":{\"api_key_set\":%s,"
-                              "\"owned_games_cache\":false,\"steam_id\":\"\",\"steam_id_detected\":false}}}",
-                              api_key_set ? "true" : "false", api_key_set ? "true" : "false");
+                              "{\"ok\":true,\"sync\":{\"api_key_set\":%s,\"owned_games_cache\":%s,"
+                              "\"steam_id\":\"%s\",\"steam_id_detected\":%s},\"library\":{\"ok\":true,"
+                              "\"games\":[],\"total\":%d,\"installed_count\":0,\"sync\":{\"api_key_set\":%s,"
+                              "\"owned_games_cache\":%s,\"steam_id\":\"%s\",\"steam_id_detected\":%s}}}",
+                              api_key_set ? "true" : "false", cache_exists_str,
+                              has_steam_id ? steam_id : "", has_steam_id ? "true" : "false", games_count,
+                              api_key_set ? "true" : "false", cache_exists_str,
+                              has_steam_id ? steam_id : "", has_steam_id ? "true" : "false");
     if (response_n < 0 || (size_t)response_n >= sizeof(response_body))
         return make_error_response("internal error");
     return make_data_response(response_body);
