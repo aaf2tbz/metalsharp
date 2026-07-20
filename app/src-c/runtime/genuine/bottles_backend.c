@@ -604,6 +604,43 @@ static JsonValue* bottles_load(const char* id, char** error) {
     return bottle;
 }
 
+static JsonValue* bottles_create_empty(const char* id) {
+    if (!bottles_valid_id(id))
+        return NULL;
+    JsonValue* root = json_new_object();
+    if (root == NULL)
+        return NULL;
+    char timestamp[32];
+    snprintf(timestamp, sizeof(timestamp), "%lld", (long long)time(NULL));
+    char prefix_path[PATH_MAX];
+    snprintf(prefix_path, sizeof(prefix_path), "%s/bottles/%s/prefix", bottles_home(), id);
+    /* Determine if this is a steam bottle (id starts with "steam_") */
+    bool is_steam = strncmp(id, "steam_", 6u) == 0;
+    unsigned int appid = 0u;
+    if (is_steam)
+        appid = (unsigned int)strtoul(id + 6u, NULL, 10);
+    json_object_set_owned(root, "id", json_new_string(id));
+    json_object_set_owned(root, "name", json_new_string(is_steam ? "Steam Game" : id));
+    json_object_set_owned(root, "custom_name", json_new_null());
+    json_object_set_owned(root, "bottle_type", json_new_string(is_steam ? "steam" : "custom"));
+    if (is_steam && appid > 0u)
+        json_object_set_owned(root, "steam_app_id", json_new_number((double)appid));
+    else
+        json_object_set_owned(root, "steam_app_id", json_new_null());
+    json_object_set_owned(root, "prefix_path", json_new_string(prefix_path));
+    json_object_set_owned(root, "runtime_profile", json_new_string("dxmt_m12"));
+    json_object_set_owned(root, "arch", json_new_string("x86_64"));
+    json_object_set_owned(root, "windows_version", json_new_string("windows10"));
+    json_object_set_owned(root, "preferred_pipeline", json_new_null());
+    json_object_set_owned(root, "installed_components", json_new_array());
+    json_object_set_owned(root, "installed_app_detections", json_new_array());
+    json_object_set_owned(root, "runtime_assets", json_new_array());
+    json_object_set_owned(root, "health", json_new_string("ready"));
+    json_object_set_owned(root, "created_at", json_new_string(timestamp));
+    json_object_set_owned(root, "updated_at", json_new_string(timestamp));
+    return root;
+}
+
 static bool bottles_save(const JsonValue* bottle, char** error) {
     const char* id = json_get_string(json_object_get(bottle, "id"));
     if (!bottles_valid_id(id)) {
@@ -1120,10 +1157,16 @@ static MetalsharpResponse* handle_bottles_edit(const HttpRequest* req) {
     char* error = NULL;
     JsonValue* bottle = bottles_load(id, &error);
     if (bottle == NULL) {
-        json_free(body);
-        MetalsharpResponse* response = bottles_error(error != NULL ? error : "bottle read failed");
+        /* Steam bottle that has never been saved yet: lazily
+         * create an empty Steam bottle manifest so /bottles/edit
+         * can persist the user's pipeline preference. */
         free(error);
-        return response;
+        error = NULL;
+        bottle = bottles_create_empty(id);
+        if (bottle == NULL) {
+            json_free(body);
+            return bottles_error("failed to create bottle");
+        }
     }
     bool ok = true;
     if (name != NULL) {

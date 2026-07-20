@@ -597,9 +597,40 @@ static void append_rule_object(jsonbuf_t* b, const char* id, const PipelineRule*
     jsonbuf_append(b, "{");
     jsonbuf_append(b, "\"id\":");
     jsonbuf_append_string(b, id != NULL ? id : "");
+    /* Frontend uses .find((r) => r.appid === props.game.appid) to
+     * locate the matching rule for a game; expose appid explicitly. */
+    jsonbuf_append(b, ",\"appid\":");
+    if (id != NULL) {
+        char numeric_id[32];
+        int appid = -1;
+        const char* end = id;
+        while (*end >= '0' && *end <= '9')
+            end++;
+        if (end > id) {
+            size_t len = (size_t)(end - id);
+            if (len < sizeof(numeric_id)) {
+                memcpy(numeric_id, id, len);
+                numeric_id[len] = '\0';
+                appid = atoi(numeric_id);
+            }
+        }
+        char buf[24];
+        snprintf(buf, sizeof(buf), "%d", appid);
+        jsonbuf_append(b, buf);
+    } else {
+        jsonbuf_append(b, "0");
+    }
     if (rule != NULL) {
         jsonbuf_append(b, ",\"name\":");
         jsonbuf_append_string(b, rule->name);
+        jsonbuf_append(b, ",\"default_pipeline\":");
+        jsonbuf_append_string(b, rule->pipeline != NULL           ? rule->pipeline
+                                 : rule->graphics_backend != NULL ? rule->graphics_backend
+                                                                  : "");
+        jsonbuf_append(b, ",\"default_pipeline_name\":");
+        jsonbuf_append_string(b, rule->name != NULL ? rule->name : "");
+        jsonbuf_append(b, ",\"custom_exe_fix\":false");
+        jsonbuf_append(b, ",\"exe_names\":[]");
         jsonbuf_append(b, ",\"wine_binary\":");
         jsonbuf_append_string(b, rule->wine_binary);
         jsonbuf_append(b, ",\"graphics_backend\":");
@@ -613,7 +644,9 @@ static void append_rule_object(jsonbuf_t* b, const char* id, const PipelineRule*
         jsonbuf_append(b, ",\"diags\":");
         append_hash_keys(b, rule->diags);
     } else {
-        jsonbuf_append(b, ",\"name\":null,\"wine_binary\":null,\"graphics_backend\":null,"
+        jsonbuf_append(b, ",\"name\":null,\"default_pipeline\":null,"
+                          "\"default_pipeline_name\":null,\"custom_exe_fix\":false,"
+                          "\"exe_names\":[],\"wine_binary\":null,\"graphics_backend\":null,"
                           "\"dll_overrides\":null,\"runtime_lane\":null,\"deps\":[],\"diags\":[]");
     }
     jsonbuf_append(b, "}");
