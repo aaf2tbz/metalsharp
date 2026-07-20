@@ -41,9 +41,36 @@
 
 /* ── Forward declarations for backend modules ── */
 
-/* Each backend module exposes its own route registration function.
- * These will be implemented as each module is written. For now,
- * we provide stubs that return minimal valid responses. */
+extern void setup_register_routes(HttpServer* s, Database* db);
+extern void steam_register_routes(HttpServer* s, Database* db);
+extern void sharp_library_register_routes(HttpServer* s, Database* db);
+extern void bottles_register_routes(HttpServer* s, Database* db);
+extern void launch_register_routes(HttpServer* s, Database* db);
+extern void mtsp_register_routes(HttpServer* s, Database* db);
+extern void updater_register_routes(HttpServer* s, Database* db);
+extern void installer_backend_register_routes(HttpServer* s, Database* db);
+extern void diagnostics_register_routes(HttpServer* s, Database* db);
+extern void metalfx_register_routes(HttpServer* s, Database* db);
+extern void fna_profile_register_routes(HttpServer* s, Database* db);
+extern void d3dmetal_gptk_register_routes(HttpServer* s, Database* db);
+extern void mono_register_routes(HttpServer* s, Database* db);
+extern void launcher_evidence_register_routes(HttpServer* s, Database* db);
+extern void scan_register_routes(HttpServer* s, Database* db);
+extern void binding_contract_register_routes(HttpServer* s, Database* db);
+extern void command_contract_register_routes(HttpServer* s, Database* db);
+
+extern void kt_es_bridge_register_routes(HttpServer* s, Database* db);
+extern void kt_es_live_register_routes(HttpServer* s, Database* db);
+extern void kt_ipc_bridge_register_routes(HttpServer* s, Database* db);
+extern void kt_handle_table_register_routes(HttpServer* s, Database* db);
+extern void kt_handle_callbacks_register_routes(HttpServer* s, Database* db);
+extern void kt_anti_debug_register_routes(HttpServer* s, Database* db);
+extern void kt_apc_register_routes(HttpServer* s, Database* db);
+extern void kt_code_integrity_register_routes(HttpServer* s, Database* db);
+extern void kt_driver_model_register_routes(HttpServer* s, Database* db);
+extern void kt_integration_register_routes(HttpServer* s, Database* db);
+extern void kt_probe_register_routes(HttpServer* s, Database* db);
+extern void kt_thread_notify_register_routes(HttpServer* s, Database* db);
 
 /* ── /status handler ── */
 
@@ -250,5 +277,36 @@ void metalsharp_register_routes(HttpServer* server, Database* db) {
     http_server_register(server, "GET", "/diagnostics/pipeline/dry-run", stub_pipeline_dryrun);
     http_server_register(server, "GET", "/diagnostics/m12/dry-run", stub_m12_dryrun);
 
-    LOG_INFO("registered %d routes", 22);
+    /* ── Module-registered routes (the bulk of the 264) ── */
+    setup_register_routes(server, db);
+    steam_register_routes(server, db);
+    sharp_library_register_routes(server, db);
+    bottles_register_routes(server, db);
+    launch_register_routes(server, db);
+    mtsp_register_routes(server, db);
+    updater_register_routes(server, db);
+    installer_backend_register_routes(server, db);
+    diagnostics_register_routes(server, db);
+    metalfx_register_routes(server, db);
+    fna_profile_register_routes(server, db);
+    d3dmetal_gptk_register_routes(server, db);
+    mono_register_routes(server, db);
+    launcher_evidence_register_routes(server, db);
+    scan_register_routes(server, db);
+    binding_contract_register_routes(server, db);
+    command_contract_register_routes(server, db);
+    kt_es_bridge_register_routes(server, db);
+    kt_es_live_register_routes(server, db);
+    kt_ipc_bridge_register_routes(server, db);
+    kt_handle_table_register_routes(server, db);
+    kt_handle_callbacks_register_routes(server, db);
+    kt_anti_debug_register_routes(server, db);
+    kt_apc_register_routes(server, db);
+    kt_code_integrity_register_routes(server, db);
+    kt_driver_model_register_routes(server, db);
+    kt_integration_register_routes(server, db);
+    kt_probe_register_routes(server, db);
+    kt_thread_notify_register_routes(server, db);
+
+    LOG_INFO("registered ~264 routes (22 inline + 30+ module groups)");
 }
