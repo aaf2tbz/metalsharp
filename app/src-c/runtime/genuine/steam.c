@@ -441,6 +441,65 @@ static bool steam_read_steam_id(char* output, size_t output_size) {
 
 /* ── Route handlers ── */
 
+static bool steam_appid_in_array(unsigned appid, unsigned* arr, size_t count) {
+    for (size_t i = 0u; i < count; i++)
+        if (arr[i] == appid)
+            return true;
+    return false;
+}
+
+static size_t steam_scan_installed_appids(unsigned* appids, size_t capacity) {
+    size_t count = 0u;
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL || home[0] == '\0')
+        home = getenv("HOME");
+    if (home == NULL)
+        return 0u;
+    char steamapps[PATH_MAX];
+    snprintf(steamapps, sizeof(steamapps),
+             "%s/prefix-steam/drive_c/Program Files (x86)/Steam/steamapps", home);
+    /* Scan appmanifest_*.acf files */
+    const char* roots[] = {steamapps};
+    for (size_t r = 0u; r < sizeof(roots) / sizeof(roots[0]); r++) {
+        DIR* dir = opendir(roots[r]);
+        if (dir == NULL)
+            continue;
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != NULL) {
+            if (strncmp(entry->d_name, "appmanifest_", 12u) != 0)
+                continue;
+            size_t len = strlen(entry->d_name);
+            if (len < 17u || strcmp(entry->d_name + len - 4u, ".acf") != 0)
+                continue;
+            unsigned id = (unsigned)strtoul(entry->d_name + 12u, NULL, 10);
+            if (id > 0u && count < capacity && !steam_appid_in_array(id, appids, count))
+                appids[count++] = id;
+        }
+        closedir(dir);
+    }
+    /* Scan downloaded games directories */
+    char games_dir[PATH_MAX];
+    snprintf(games_dir, sizeof(games_dir), "%s/games", home);
+    DIR* games = opendir(games_dir);
+    if (games != NULL) {
+        struct dirent* entry;
+        while ((entry = readdir(games)) != NULL) {
+            if (entry->d_name[0] == '.')
+                continue;
+            unsigned id = (unsigned)strtoul(entry->d_name, NULL, 10);
+            if (id > 0u && count < capacity && !steam_appid_in_array(id, appids, count)) {
+                char game_path[PATH_MAX];
+                snprintf(game_path, sizeof(game_path), "%s/%s", games_dir, entry->d_name);
+                struct stat st;
+                if (stat(game_path, &st) == 0 && S_ISDIR(st.st_mode))
+                    appids[count++] = id;
+            }
+        }
+        closedir(games);
+    }
+    return count;
+}
+
 static MetalsharpResponse* handle_steam_status(const HttpRequest* req) {
     (void)req;
     bool running = steam_is_wine_steam_running();
@@ -474,6 +533,7 @@ static MetalsharpResponse* handle_steam_library(const HttpRequest* req) {
     char steam_id[64] = "";
     char games_json[131072] = "[]";
     int total = 0;
+    int installed_total = 0;
     if (home != NULL) {
         /* Read steam config for API key and SteamID */
         char config_path[PATH_MAX];
@@ -508,15 +568,22 @@ static MetalsharpResponse* handle_steam_library(const HttpRequest* req) {
                 JsonValue* games = json_object_get(cache, "games");
                 if (json_type(games) == JSON_ARRAY) {
                     total = (int)json_array_length(games);
+                    /* Scan for installed appids */
+                    unsigned installed_ids[4096];
+                    size_t scan_count = steam_scan_installed_appids(installed_ids, 4096u);
+                    int installed_total = 0;
                     /* Augment each game with frontend-required fields */
                     JsonValue* augmented = json_new_array();
                     for (int i = 0; i < total; i++) {
                         JsonValue* game = json_clone(json_array_get(games, (size_t)i));
                         if (game != NULL && json_type(game) == JSON_OBJECT) {
                             double appid = json_get_number(json_object_get(game, "appid"), 0.0);
-                            if (!json_object_get(game, "installed"))
-                                json_object_set_owned(game, "installed", json_new_bool(false));
-                            if (!json_object_get(game, "state"))
+                            bool is_installed = steam_appid_in_array((unsigned)appid, installed_ids, scan_count);
+                            json_object_set_owned(game, "installed", json_new_bool(is_installed));
+                            if (is_installed) {
+                                json_object_set_owned(game, "state", json_new_string("installed"));
+                                installed_total++;
+                            } else if (!json_object_get(game, "state"))
                                 json_object_set_owned(game, "state", json_new_string("not_installed"));
                             if (!json_object_get(game, "cover_url")) {
                                 char cover[256];
@@ -553,7 +620,7 @@ static MetalsharpResponse* handle_steam_library(const HttpRequest* req) {
                      "{\"ok\":true,\"games\":%s,\"total\":%d,\"installed_count\":0,"
                      "\"sync\":{\"api_key_set\":%s,\"owned_games_cache\":%s,"
                      "\"steam_id\":\"%s\",\"steam_id_detected\":%s}}",
-                     games_json, total, has_key ? "true" : "false", has_cache ? "true" : "false",
+                     games_json, total, installed_total, has_key ? "true" : "false", has_cache ? "true" : "false",
                      steam_id[0] != '\0' ? steam_id : "", steam_id[0] != '\0' ? "true" : "false");
     if (n < 0 || (size_t)n >= sizeof(body))
         return make_error_response("library too large");
