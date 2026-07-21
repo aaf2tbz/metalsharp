@@ -843,27 +843,123 @@ static MetalsharpResponse* build_appid_dryrun(const HttpRequest* req, bool inclu
  * UI without consulting the mtsp_rules HashTable.
  */
 static MetalsharpResponse* handle_pipelines(const HttpRequest* req) {
-    (void)req;
-    static const char body[] =
-        "{\"ok\":true,\"appid\":0,\"preferred\":null,\"preferred_name\":null,"
-        "\"recommended\":\"m12\",\"recommended_name\":\"M12\",\"pipelines\":["
-        "{\"id\":\"m12\",\"name\":\"M12\",\"backend\":\"dxmt\",\"description\":\"D3D12 -> Metal via "
-        "DXMT\",\"requires_wine\":true,\"experimental\":false},"
-        "{\"id\":\"m11\",\"name\":\"M11\",\"backend\":\"dxmt\",\"description\":\"D3D11 -> Metal via "
-        "DXMT\",\"requires_wine\":true,\"experimental\":false},"
-        "{\"id\":\"m11_32\",\"name\":\"M11(32)\",\"backend\":\"dxmt\",\"description\":\"D3D11 -> Metal via DXMT "
-        "(32-bit / i386)\",\"requires_wine\":true,\"experimental\":false},"
-        "{\"id\":\"m10\",\"name\":\"M10\",\"backend\":\"dxmt\",\"description\":\"D3D10 -> Metal via "
-        "DXMT\",\"requires_wine\":true,\"experimental\":false},"
-        "{\"id\":\"m10_32\",\"name\":\"M10(32)\",\"backend\":\"dxmt\",\"description\":\"D3D10 -> Metal via DXMT "
-        "(32-bit / i386)\",\"requires_wine\":true,\"experimental\":false},"
-        "{\"id\":\"m9\",\"name\":\"M9\",\"backend\":\"dxmt\",\"description\":\"D3D9 -> Metal via DXMT launch "
-        "family\",\"requires_wine\":true,\"experimental\":false},"
-        "{\"id\":\"d3dmetal\",\"name\":\"D3DMetal\",\"backend\":\"d3dmetal\",\"description\":\"D3D11/D3D12 via Apple "
-        "D3DMetal 4.0 (GPTK Wine)\",\"requires_wine\":false,\"experimental\":true},"
-        "{\"id\":\"fna_arm64\",\"name\":\"Mono/FNA\",\"backend\":\"mono\",\"description\":\"Windows XNA/FNA via "
-        "MetalSharp Mono runtime\",\"requires_wine\":false,\"experimental\":false}]}";
-    return make_data_response(body);
+    unsigned int appid = 0u;
+    if (req != NULL && req->query != NULL)
+        (void)query_lookup_uint(req->query, "appid", &appid);
+
+    /* Resolve per-appid recommended pipeline from the rules table;
+     * without this, every game would show "M12" in the chip even
+     * when configs/mtsp-rules.toml declares a D3D9 → m9 rule. */
+    const char* recommended_id = "m12";
+    const char* recommended_name = "M12";
+    char appid_buf[16];
+    if (appid > 0u) {
+        snprintf(appid_buf, sizeof(appid_buf), "%u", appid);
+        if (g_mtsp_rules != NULL && g_mtsp_rules->overrides != NULL) {
+            PipelineRule* rule = config_get_rule(g_mtsp_rules, appid);
+            fprintf(stderr, "DEBUG got rule=%p key=%s\n", (void*)rule, appid_buf);
+            if (rule != NULL && rule->pipeline != NULL && rule->pipeline[0] != '\0') {
+                recommended_id = rule->pipeline;
+                if (strcmp(rule->pipeline, "m9") == 0)
+                    recommended_name = "M9";
+                else if (strcmp(rule->pipeline, "m10") == 0 || strcmp(rule->pipeline, "m10_32") == 0)
+                    recommended_name = strcmp(rule->pipeline, "m10_32") == 0 ? "M10(32)" : "M10";
+                else if (strcmp(rule->pipeline, "m11") == 0 || strcmp(rule->pipeline, "m11_32") == 0)
+                    recommended_name = strcmp(rule->pipeline, "m11_32") == 0 ? "M11(32)" : "M11";
+                else if (strcmp(rule->pipeline, "m12") == 0)
+                    recommended_name = "M12";
+                else if (strcmp(rule->pipeline, "d3dmetal") == 0)
+                    recommended_name = "D3DMetal";
+                else if (strcmp(rule->pipeline, "fna_arm64") == 0)
+                    recommended_name = "Mono/FNA";
+            }
+        }
+    }
+
+    /* If the user has saved a preferred_pipeline via /bottles/edit
+     * already, prefer that over the static rule so subsequent visits
+     * reflect the user's choice rather than the default rule. */
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL || home[0] == '\0')
+        home = getenv("HOME");
+    const char* preferred_id = recommended_id;
+    const char* preferred_name = recommended_name;
+    char preferred_buf[64] = "";
+    if (appid > 0u && home != NULL) {
+        char bottle_path[PATH_MAX];
+        snprintf(bottle_path, sizeof(bottle_path), "%s/bottles/steam_%u/bottle.json", home, appid);
+        FILE* bf = fopen(bottle_path, "rb");
+        if (bf != NULL) {
+            char data[8192];
+            size_t len = fread(data, 1u, sizeof(data) - 1u, bf);
+            data[len] = '\0';
+            fclose(bf);
+            JsonValue* bottle = json_parse(data, len, NULL);
+            if (bottle != NULL && json_type(bottle) == JSON_OBJECT) {
+                const char* pp = json_get_string(json_object_get(bottle, "preferred_pipeline"));
+                if (pp != NULL && pp[0] != '\0') {
+                    snprintf(preferred_buf, sizeof(preferred_buf), "%s", pp);
+                    preferred_id = preferred_buf;
+                    if (strcmp(pp, "m9") == 0)
+                        preferred_name = "M9";
+                    else if (strcmp(pp, "m10") == 0 || strcmp(pp, "m10_32") == 0)
+                        preferred_name = strcmp(pp, "m10_32") == 0 ? "M10(32)" : "M10";
+                    else if (strcmp(pp, "m11") == 0 || strcmp(pp, "m11_32") == 0)
+                        preferred_name = strcmp(pp, "m11_32") == 0 ? "M11(32)" : "M11";
+                    else if (strcmp(pp, "m12") == 0)
+                        preferred_name = "M12";
+                    else if (strcmp(pp, "d3dmetal") == 0)
+                        preferred_name = "D3DMetal";
+                    else if (strcmp(pp, "fna_arm64") == 0)
+                        preferred_name = "Mono/FNA";
+                }
+            }
+            json_free(bottle);
+        }
+    }
+
+    jsonbuf_t body = jsonbuf_new();
+    if (!body.ok)
+        return make_error_response("mtsp: out of memory");
+    char hdr[512];
+    int hn = snprintf(hdr, sizeof(hdr),
+                      "{\"ok\":true,\"appid\":%u,"
+                      "\"recommended\":\"%s\",\"recommended_name\":\"%s\","
+                      "\"preferred\":\"%s\",\"preferred_name\":\"%s\",",
+                      appid, recommended_id, recommended_name, preferred_id, preferred_name);
+    if (hn < 0 || (size_t)hn >= sizeof(hdr)) {
+        jsonbuf_free(&body);
+        return make_error_response("mtsp: out of memory");
+    }
+    jsonbuf_append(&body, hdr);
+    jsonbuf_append(
+        &body,
+        "\"pipelines\":["
+        "{\"id\":\"m12\",\"name\":\"M12\",\"backend\":\"dxmt\","
+        "\"description\":\"D3D12 -> Metal via DXMT\",\"requires_wine\":true,\"experimental\":false},"
+        "{\"id\":\"m11\",\"name\":\"M11\",\"backend\":\"dxmt\","
+        "\"description\":\"D3D11 -> Metal via DXMT\",\"requires_wine\":true,\"experimental\":false},"
+        "{\"id\":\"m11_32\",\"name\":\"M11(32)\",\"backend\":\"dxmt\","
+        "\"description\":\"D3D11 -> Metal via DXMT (32-bit / i386)\",\"requires_wine\":true,\"experimental\":false},"
+        "{\"id\":\"m10\",\"name\":\"M10\",\"backend\":\"dxmt\","
+        "\"description\":\"D3D10 -> Metal via DXMT\",\"requires_wine\":true,\"experimental\":false},"
+        "{\"id\":\"m10_32\",\"name\":\"M10(32)\",\"backend\":\"dxmt\","
+        "\"description\":\"D3D10 -> Metal via DXMT (32-bit / i386)\",\"requires_wine\":true,\"experimental\":false},"
+        "{\"id\":\"m9\",\"name\":\"M9\",\"backend\":\"dxmt\","
+        "\"description\":\"D3D9 -> Metal via DXMT launch family\",\"requires_wine\":true,\"experimental\":false},"
+        "{\"id\":\"d3dmetal\",\"name\":\"D3DMetal\",\"backend\":\"d3dmetal\","
+        "\"description\":\"D3D11/D3D12 via Apple D3DMetal 4.0 (GPTK Wine)\","
+        "\"requires_wine\":false,\"experimental\":true},"
+        "{\"id\":\"fna_arm64\",\"name\":\"Mono/FNA\",\"backend\":\"mono\","
+        "\"description\":\"Windows XNA/FNA via MetalSharp Mono runtime\","
+        "\"requires_wine\":false,\"experimental\":false}]}");
+    if (!body.ok) {
+        jsonbuf_free(&body);
+        return make_error_response("mtsp: out of memory");
+    }
+    MetalsharpResponse* response = make_data_response(body.data);
+    jsonbuf_free(&body);
+    return response;
 }
 
 /*
@@ -917,27 +1013,143 @@ static char* replace_dryrun_token(char* input, const char* token, const char* re
     return output;
 }
 
+/*
+ * GET /diagnostics/m12/dry-run?appid=N — return a JSON body
+ * describing which M12 runtime files (8 Windows DLLs in
+ * runtime/wine/lib/dxmt_m12/x86_64-windows and 4 Unix sidecars
+ * in runtime/wine/lib/dxmt_m12/x86_64-unix) are absent on disk
+ * for the requested appid. When the bottle manifest under
+ * bottles/steam_<appid>/bottle.json resolves to a game
+ * install directory, the same payload is also checked there
+ * so the caller learns about missing deployed DLLs alongside
+ * missing runtime DLLs. The response is always 200 with
+ * "ok": true, "dry_run": true, and a "missing" array; an
+ * empty array means every expected file was found.
+ *
+ * Mirrors handle_steam_d3d12_runtime_doctor in the legacy
+ * Rust backend: the dry_run flag never flips to false here
+ * because the endpoint is itself a dry run — the missing
+ * array is what callers inspect for negative coverage.
+ */
+static void append_missing_entry(jsonbuf_t* body, bool* first, const char* filename, const char* path) {
+    if (body == NULL || !body->ok || first == NULL || filename == NULL || path == NULL)
+        return;
+    if (!*first)
+        jsonbuf_append(body, ",");
+    *first = false;
+    jsonbuf_append(body, "{\"filename\":");
+    jsonbuf_append_string(body, filename);
+    jsonbuf_append(body, ",\"path\":");
+    jsonbuf_append_string(body, path);
+    jsonbuf_append(body, "}");
+}
+
+/*
+ * Probe one directory for every filename in `files` and emit
+ * one missing-entry record for every path that fails stat().
+ * A NULL or empty `dir` causes every entry to be reported as
+ * missing so the caller learns the prefix itself is absent.
+ */
+static void append_missing_in_dir(jsonbuf_t* body, bool* first, const char* dir, const char* const* files) {
+    if (body == NULL || !body->ok || first == NULL || files == NULL)
+        return;
+    if (dir == NULL || dir[0] == '\0') {
+        for (size_t i = 0u; files[i] != NULL; i++)
+            append_missing_entry(body, first, files[i], files[i]);
+        return;
+    }
+    char path[PATH_MAX];
+    struct stat st;
+    for (size_t i = 0u; files[i] != NULL; i++) {
+        int n = snprintf(path, sizeof(path), "%s/%s", dir, files[i]);
+        if (n < 0 || (size_t)n >= sizeof(path))
+            continue;
+        if (stat(path, &st) != 0)
+            append_missing_entry(body, first, files[i], path);
+    }
+}
+
 MetalsharpResponse* mtsp_m12_dry_run_response(const HttpRequest* req) {
     unsigned int appid = 0u;
     if (req != NULL)
         (void)query_lookup_uint(req->query, "appid", &appid);
     ensure_app_cache_directories(appid);
     const char* home = getenv("METALSHARP_HOME");
-    if (home == NULL)
+    if (home == NULL || home[0] == '\0')
         home = getenv("HOME");
-    if (home == NULL)
+    if (home == NULL || home[0] == '\0')
         home = "";
-    char appid_text[32];
-    snprintf(appid_text, sizeof(appid_text), "%u", appid);
-    char* body = strdup(M12_DRYRUN_TEMPLATE);
-    if (body != NULL)
-        body = replace_dryrun_token(body, "@METALSHARP_HOME@", home);
-    if (body != NULL)
-        body = replace_dryrun_token(body, "@APPID@", appid_text);
-    if (body == NULL)
+
+    static const char* const m12_win_files[] = {"d3d12.dll",     "d3d11.dll",     "dxgi.dll",
+                                                "dxgi_dxmt.dll", "d3d10core.dll", "winemetal.dll",
+                                                "nvapi64.dll",   "nvngx.dll",     NULL};
+    static const char* const m12_unix_files[] = {"winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib",
+                                                 "libunwind.1.dylib", NULL};
+
+    char win_dir[PATH_MAX];
+    char unix_dir[PATH_MAX];
+    snprintf(win_dir, sizeof(win_dir), "%s/runtime/wine/lib/dxmt_m12/x86_64-windows", home);
+    snprintf(unix_dir, sizeof(unix_dir), "%s/runtime/wine/lib/dxmt_m12/x86_64-unix", home);
+
+    /* Resolve the game install directory from the bottle manifest, if any.
+       A missing manifest or absent game_install_path is not an error — it
+       just means we have no deployed-DLL coverage to report on. */
+    char game_dir[PATH_MAX] = "";
+    bool have_game_dir = false;
+    if (appid != 0u && home[0] != '\0') {
+        char bottle_path[PATH_MAX];
+        int bn = snprintf(bottle_path, sizeof(bottle_path), "%s/bottles/steam_%u/bottle.json", home, appid);
+        if (bn > 0 && (size_t)bn < sizeof(bottle_path)) {
+            FILE* bf = fopen(bottle_path, "rb");
+            if (bf != NULL) {
+                char data[8192];
+                size_t len = fread(data, 1u, sizeof(data) - 1u, bf);
+                data[len] = '\0';
+                fclose(bf);
+                JsonValue* bottle = json_parse(data, len, NULL);
+                if (bottle != NULL) {
+                    if (json_type(bottle) == JSON_OBJECT) {
+                        const char* gip = json_get_string(json_object_get(bottle, "game_install_path"));
+                        if (gip != NULL && gip[0] != '\0') {
+                            int gn = snprintf(game_dir, sizeof(game_dir), "%s", gip);
+                            if (gn > 0 && (size_t)gn < sizeof(game_dir))
+                                have_game_dir = true;
+                        }
+                    }
+                    json_free(bottle);
+                }
+            }
+        }
+    }
+
+    jsonbuf_t body = jsonbuf_new();
+    if (!body.ok)
         return make_error_response("mtsp: out of memory");
-    MetalsharpResponse* response = make_data_response(body);
-    free(body);
+
+    jsonbuf_append(&body, "{\"ok\":true,\"appid\":");
+    char aid[16];
+    snprintf(aid, sizeof(aid), "%u", appid);
+    jsonbuf_append(&body, aid);
+    jsonbuf_append(&body, ",\"dry_run\":true,\"env_pairs\":["
+                          "{\"key\":\"MS_GRAPHICS_BACKEND\",\"value\":\"dxmt_m12\"}],"
+                          "\"missing\":[");
+
+    bool first = true;
+    append_missing_in_dir(&body, &first, win_dir, m12_win_files);
+    append_missing_in_dir(&body, &first, unix_dir, m12_unix_files);
+    if (have_game_dir) {
+        append_missing_in_dir(&body, &first, game_dir, m12_win_files);
+        append_missing_in_dir(&body, &first, game_dir, m12_unix_files);
+    }
+
+    jsonbuf_append(&body, "]}");
+
+    if (!body.ok) {
+        jsonbuf_free(&body);
+        return make_error_response("mtsp: out of memory");
+    }
+    MetalsharpResponse* response = make_data_response(body.data);
+    jsonbuf_free(&body);
     return response;
 }
 

@@ -11,12 +11,10 @@
  *   on top, computes the WINEDLLOVERRIDES / WINEDLLPATH /
  *   DYLD_LIBRARY_PATH / DXMT_WINEMETAL_UNIXLIB /
  *   MS_GRAPHICS_BACKEND / WINEMSYNC environment that the
- *   bin/metalsharp-wine binary would receive, and returns the
- *   computed env as an env_pairs array. Actual Wine process
- *   spawning is stubbed (see TODO markers) so the route stays
- *   pure: the Electron shell inspects the env_pairs and either
- *   proxies a fork+exec locally or hands the values back to the
- *   maintained-C adapter in a later phase.
+ *   bin/metalsharp-wine binary would receive, and (Phase 5)
+ *   forks + execs Wine against the resolved game executable
+ *   so the Electron shell no longer needs to spawn the game
+ *   process itself.
  *
  *   The /game/prepare, /game/running, /game/dual-info,
  *   /processes/force-kill, and /kill routes return either
@@ -79,7 +77,11 @@
  *         { "key": "MS_PIPELINE_ID",   "value": "<resolved id>" },
  *         { "key": "MS_APPID",         "value": "<decimal appid>" },
  *         { "key": "WINEMSYNC",        "value": "0" }
- *       ]
+ *       ],
+ *       "pid": <spawned wine PID, 0 on failure>,
+ *       "launched": <true on successful fork+exec, false otherwise>,
+ *       "game_dir": "<resolved game install dir, present when found>",
+ *       "launch_error": "<error string, present only when launched=false>"
  *     }
  *
  *   Failure envelopes mirror the shared MetalsharpResponse:
@@ -1033,6 +1035,331 @@ static MetalsharpResponse* handle_launch(const HttpRequest* req) {
     return make_data_response(response);
 }
 
+/* ── /game/launch-auto spawn helpers ── */
+
+/*
+ * Parse the "installdir" field from a Steam
+ *     appmanifest_<appid>.acf
+ * file. The file uses simple key/value lines in the form
+ *     "installdir"     "<value>"
+ * The returned buffer is NUL-terminated. The function returns
+ * false when the file cannot be opened, the field is missing,
+ * or the field is empty.
+ */
+static bool launch_parse_acf_installdir(const char* manifest_path, char* output, size_t output_size) {
+    if (output == NULL || output_size == 0u)
+        return false;
+    output[0] = '\0';
+    FILE* input = manifest_path != NULL ? fopen(manifest_path, "rb") : NULL;
+    if (input == NULL)
+        return false;
+    char line[4096];
+    bool found = false;
+    while (fgets(line, sizeof(line), input) != NULL) {
+        char* cursor = line;
+        while (*cursor == ' ' || *cursor == '\t')
+            cursor++;
+        if (strncmp(cursor, "\"installdir\"", 12u) != 0)
+            continue;
+        cursor += 12u;
+        while (*cursor == ' ' || *cursor == '\t')
+            cursor++;
+        if (*cursor == '"')
+            cursor++;
+        char* end = strchr(cursor, '"');
+        if (end == NULL)
+            end = cursor + strcspn(cursor, "\r\n");
+        size_t length = (size_t)(end - cursor);
+        if (length > 0u && length < output_size) {
+            memcpy(output, cursor, length);
+            output[length] = '\0';
+            found = true;
+        }
+        break;
+    }
+    fclose(input);
+    return found;
+}
+
+/*
+ * Resolve the Wine prefix directory used by the launched game.
+ * Honours METALSHARP_HOME when set so a relocated install tree
+ * still locates the matching prefix; otherwise falls back to the
+ * historical $HOME/.metalsharp/prefix-steam path.
+ */
+static bool launch_resolve_wine_prefix(char* output, size_t output_size) {
+    if (output == NULL || output_size == 0u)
+        return false;
+    const char* home = getenv("METALSHARP_HOME");
+    if (home != NULL && home[0] != '\0') {
+        int written = snprintf(output, output_size, "%s/prefix-steam", home);
+        return written >= 0 && (size_t)written < output_size;
+    }
+    const char* user_home = getenv("HOME");
+    int written = snprintf(output, output_size, "%s/.metalsharp/prefix-steam", user_home != NULL ? user_home : "");
+    return written >= 0 && (size_t)written < output_size;
+}
+
+/*
+ * Find the game install directory for the supplied appid by
+ * probing three candidate roots in order:
+ *
+ *   1. $METALSHARP_HOME/games/<appid>/  (and $HOME/games/<appid>/)
+ *   2. Wine prefix steamapps/common/<installdir>/  (parsed
+ *      from the prefix's appmanifest_<appid>.acf)
+ *   3. Native Steam steamapps/common/<installdir>/  (macOS
+ *      and Linux user-land install roots)
+ *
+ * On success the resolved absolute path is written to
+ * `output` and the function returns true. On any failure
+ * `output` is left empty and the function returns false.
+ */
+static bool launch_find_game_dir(unsigned int appid, char* output, size_t output_size) {
+    if (output == NULL || output_size == 0u)
+        return false;
+    output[0] = '\0';
+    const char* mshome = getenv("METALSHARP_HOME");
+    const char* user_home = getenv("HOME");
+    /* 1) METALSHARP_HOME/games/<appid> */
+    char path[PATH_MAX];
+    if (mshome != NULL && mshome[0] != '\0') {
+        int written = snprintf(path, sizeof(path), "%s/games/%u", mshome, appid);
+        if (written > 0 && (size_t)written < sizeof(path) && launch_path_exists(path)) {
+            snprintf(output, output_size, "%s", path);
+            return true;
+        }
+    }
+    if (user_home != NULL && user_home[0] != '\0') {
+        int written = snprintf(path, sizeof(path), "%s/games/%u", user_home, appid);
+        if (written > 0 && (size_t)written < sizeof(path) && launch_path_exists(path)) {
+            snprintf(output, output_size, "%s", path);
+            return true;
+        }
+    }
+    char manifest_name[64];
+    int mn = snprintf(manifest_name, sizeof(manifest_name), "appmanifest_%u.acf", appid);
+    if (mn <= 0 || (size_t)mn >= sizeof(manifest_name))
+        return false;
+    char install_dir[256];
+    /* 2) Wine prefix steamapps */
+    char prefix[PATH_MAX];
+    if (launch_resolve_wine_prefix(prefix, sizeof(prefix))) {
+        char steamapps[PATH_MAX], manifest[PATH_MAX];
+        if (launch_join_path(steamapps, sizeof(steamapps), prefix, "drive_c/Program Files (x86)/Steam/steamapps") &&
+            launch_join_path(manifest, sizeof(manifest), steamapps, manifest_name) && launch_path_exists(manifest) &&
+            launch_parse_acf_installdir(manifest, install_dir, sizeof(install_dir))) {
+            char common[PATH_MAX], game[PATH_MAX];
+            if (launch_join_path(common, sizeof(common), steamapps, "common") &&
+                launch_join_path(game, sizeof(game), common, install_dir) && launch_path_exists(game)) {
+                snprintf(output, output_size, "%s", game);
+                return true;
+            }
+        }
+    }
+    /* 3) Native Steam install roots */
+    static const char* const mac_roots[] = {"Library/Application Support/Steam/steamapps", ".steam/steam/steamapps",
+                                            ".local/share/Steam/steamapps"};
+    if (user_home == NULL)
+        return false;
+    for (size_t i = 0u; i < sizeof(mac_roots) / sizeof(mac_roots[0]); i++) {
+        char root[PATH_MAX], mf[PATH_MAX];
+        if (!launch_join_path(root, sizeof(root), user_home, mac_roots[i]))
+            continue;
+        if (!launch_join_path(mf, sizeof(mf), root, manifest_name))
+            continue;
+        if (!launch_path_exists(mf))
+            continue;
+        if (!launch_parse_acf_installdir(mf, install_dir, sizeof(install_dir)))
+            continue;
+        char common[PATH_MAX], game[PATH_MAX];
+        if (!launch_join_path(common, sizeof(common), root, "common"))
+            continue;
+        if (!launch_join_path(game, sizeof(game), common, install_dir))
+            continue;
+        if (launch_path_exists(game)) {
+            snprintf(output, output_size, "%s", game);
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * Fork + exec a Wine game launch with the env derived from the
+ * maintained launch policy. The child process:
+ *
+ *   - chdir()s into `game_dir` (errors are reported through
+ *     the exec_pipe and surface as a launch failure);
+ *   - redirects stdout and stderr into per-appid log files
+ *     under $METALSHARP_HOME/logs/ (or $HOME/logs/);
+ *   - sets WINEPREFIX, WINEDEBUG, WINEDEBUGGER, STEAM_RUNTIME,
+ *     MS_APPID, WINEDLLOVERRIDES, WINEDLLPATH, and
+ *     DYLD_FALLBACK_LIBRARY_PATH / LD_LIBRARY_PATH from the
+ *     supplied policy.
+ *
+ * On success the parent records the child PID in `*pid_out`
+ * and returns true. On any failure a heap-free error message is
+ * written to `error` and the function returns false.
+ */
+static bool launch_spawn_game_with_policy(const char* wine_binary, const char* game_dir, const char* game_exe,
+                                          const MetalsharpLaunchPolicy* policy, unsigned int appid, pid_t* pid_out,
+                                          char* error, size_t error_size) {
+    if (wine_binary == NULL || wine_binary[0] == '\0' || game_dir == NULL || game_dir[0] == '\0' || game_exe == NULL ||
+        game_exe[0] == '\0' || pid_out == NULL || error == NULL || error_size == 0u) {
+        if (error != NULL && error_size > 0u)
+            snprintf(error, error_size, "invalid launch request");
+        return false;
+    }
+    char prefix[PATH_MAX];
+    if (!launch_resolve_wine_prefix(prefix, sizeof(prefix))) {
+        snprintf(error, error_size, "wine prefix path too long");
+        return false;
+    }
+    /* Per-appid log files keep stdout/stderr from the Wine
+     * process so the Electron shell (and the maintainer) can
+     * diagnose launch failures after the fact. */
+    const char* mshome = getenv("METALSHARP_HOME");
+    const char* user_home = getenv("HOME");
+    const char* log_root = (mshome != NULL && mshome[0] != '\0') ? mshome : user_home;
+    if (log_root == NULL)
+        log_root = ".";
+    char log_dir[PATH_MAX];
+    int ld = snprintf(log_dir, sizeof(log_dir), "%s/logs", log_root);
+    if (ld > 0 && (size_t)ld < sizeof(log_dir))
+        (void)mkdir(log_dir, 0755); /* best-effort */
+    char stdout_log[PATH_MAX], stderr_log[PATH_MAX];
+    snprintf(stdout_log, sizeof(stdout_log), "%s/logs/launch-stdout-%u.log", log_root, appid);
+    snprintf(stderr_log, sizeof(stderr_log), "%s/logs/launch-stderr-%u.log", log_root, appid);
+    int stdout_fd = open(stdout_log, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int stderr_fd = open(stderr_log, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (stdout_fd < 0 || stderr_fd < 0) {
+        if (error != NULL && error_size > 0u)
+            snprintf(error, error_size, "open log: %s", strerror(errno));
+        if (stdout_fd >= 0)
+            close(stdout_fd);
+        if (stderr_fd >= 0)
+            close(stderr_fd);
+        return false;
+    }
+    int exec_pipe[2];
+    if (pipe(exec_pipe) != 0) {
+        snprintf(error, error_size, "%s", strerror(errno));
+        close(stdout_fd);
+        close(stderr_fd);
+        return false;
+    }
+    (void)fcntl(exec_pipe[1], F_SETFD, FD_CLOEXEC);
+    pid_t pid = fork();
+    if (pid < 0) {
+        snprintf(error, error_size, "%s", strerror(errno));
+        close(exec_pipe[0]);
+        close(exec_pipe[1]);
+        close(stdout_fd);
+        close(stderr_fd);
+        return false;
+    }
+    if (pid == 0) {
+        /* Child — perform all env mutations here so the parent
+         * (which is a multi-threaded HTTP server) is unaffected. */
+        close(exec_pipe[0]);
+        if (chdir(game_dir) != 0) {
+            int child_errno = errno;
+            (void)write(exec_pipe[1], &child_errno, sizeof(child_errno));
+            _exit(127);
+        }
+        (void)dup2(stdout_fd, STDOUT_FILENO);
+        (void)dup2(stderr_fd, STDERR_FILENO);
+        if (stdout_fd > STDERR_FILENO)
+            close(stdout_fd);
+        if (stderr_fd > STDERR_FILENO)
+            close(stderr_fd);
+        (void)setenv("WINEPREFIX", prefix, 1);
+        (void)setenv("WINEDEBUG", "+vulkan,+d3d,+d3d11,+dxgi,+wined3d,+opengl", 1);
+        (void)setenv("WINEDEBUGGER", "none", 1);
+        (void)setenv("STEAM_RUNTIME", "0", 1);
+        char appid_text[LAUNCH_APPID_TEXT];
+        snprintf(appid_text, sizeof(appid_text), "%u", appid);
+        (void)setenv("MS_APPID", appid_text, 1);
+        if (policy != NULL) {
+            if (policy->dll_overrides != NULL && policy->dll_overrides[0] != '\0')
+                (void)setenv("WINEDLLOVERRIDES", policy->dll_overrides, 1);
+            if (policy->windows_dll_path != NULL && policy->windows_dll_path[0] != '\0')
+                (void)setenv("WINEDLLPATH", policy->windows_dll_path, 1);
+            if (policy->unix_library_path != NULL && policy->unix_library_path[0] != '\0') {
+#if defined(__APPLE__)
+                (void)setenv("DYLD_FALLBACK_LIBRARY_PATH", policy->unix_library_path, 1);
+#elif defined(__linux__)
+                (void)setenv("LD_LIBRARY_PATH", policy->unix_library_path, 1);
+#endif
+            }
+        }
+        launch_set_runtime_environment(mshome);
+        char* argv[] = {(char*)wine_binary, (char*)game_exe, NULL};
+        execv(wine_binary, argv);
+        int child_errno = errno;
+        (void)write(exec_pipe[1], &child_errno, sizeof(child_errno));
+        _exit(127);
+    }
+    /* Parent */
+    close(exec_pipe[1]);
+    close(stdout_fd);
+    close(stderr_fd);
+    int child_errno = 0;
+    ssize_t read_size;
+    do {
+        read_size = read(exec_pipe[0], &child_errno, sizeof(child_errno));
+    } while (read_size < 0 && errno == EINTR);
+    close(exec_pipe[0]);
+    if (read_size > 0) {
+        while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
+        }
+        snprintf(error, error_size, "%s", strerror(child_errno));
+        return false;
+    }
+    pthread_t reaper;
+    if (pthread_create(&reaper, NULL, launch_reap_child, (void*)(intptr_t)pid) == 0)
+        pthread_detach(reaper);
+    *pid_out = pid;
+    return true;
+}
+
+/*
+ * Best-effort attempt to launch the game for `appid` using
+ * the supplied policy. Returns true on success and writes the
+ * spawned PID to `*pid_out`; on failure writes a descriptive
+ * message to `error` and returns false. Both wine-binary and
+ * game-directory resolution failures are funnelled through the
+ * error path so the caller can surface them to the user.
+ */
+static bool launch_auto_attempt(unsigned int appid, const MetalsharpLaunchPolicy* policy, char* game_dir_out,
+                                size_t game_dir_size, pid_t* pid_out, char* error, size_t error_size) {
+    if (pid_out != NULL)
+        *pid_out = 0;
+    if (game_dir_out != NULL && game_dir_size > 0u)
+        game_dir_out[0] = '\0';
+    char wine_binary[PATH_MAX];
+    if (!launch_find_wine(wine_binary, sizeof(wine_binary))) {
+        snprintf(error, error_size, "%s", "wine binary not found");
+        return false;
+    }
+    char game_dir[PATH_MAX];
+    if (!launch_find_game_dir(appid, game_dir, sizeof(game_dir))) {
+        snprintf(error, error_size, "%s", "game directory not found");
+        return false;
+    }
+    if (game_dir_out != NULL && game_dir_size > 0u)
+        snprintf(game_dir_out, game_dir_size, "%s", game_dir);
+    char game_exe[PATH_MAX];
+    if (!launch_find_game_exe_recursive(game_dir, 0u, false, game_exe, sizeof(game_exe)) &&
+        !launch_find_game_exe_recursive(game_dir, 0u, true, game_exe, sizeof(game_exe))) {
+        snprintf(error, error_size, "%s", "no launchable game executable found");
+        return false;
+    }
+    if (!launch_spawn_game_with_policy(wine_binary, game_dir, game_exe, policy, appid, pid_out, error, error_size))
+        return false;
+    return true;
+}
+
 /* ── /game/launch-auto ── */
 
 /*
@@ -1041,9 +1368,10 @@ static MetalsharpResponse* handle_launch(const HttpRequest* req) {
  * return the same LaunchResult payload; /launch is the legacy
  * alias kept for backward compatibility with the original
  *     run_game
- * flow. The route computes the env without spawning Wine so the
- * Electron shell can preview or override the env before
- * launching the wine binary.
+ * flow. The route computes the env and (Phase 5) attempts to
+ * fork + exec Wine against the resolved game executable. On
+ * failure the env_pairs are still returned so the Electron
+ * shell can diagnose or retry the launch.
  */
 static MetalsharpResponse* launch_bad_request(const char* message) {
     MetalsharpResponse* response = make_error_response(message);
@@ -1093,6 +1421,39 @@ static MetalsharpResponse* handle_launch_auto_impl(const HttpRequest* req) {
     jsonbuf_append_escaped(&body, policy->pipeline_id);
     jsonbuf_append(&body, ",\"env_pairs\":");
     jsonbuf_append_policy_env(&body, policy, appid);
+    /* Phase 5: attempt to fork + exec the Wine game launch.
+     * On success the spawned PID is included alongside
+     * "launched":true and the resolved game_dir; on failure
+     * the response still carries env_pairs (so the Electron
+     * shell can inspect or override them) plus a descriptive
+     * launch_error explaining why Wine did not start. */
+    pid_t spawned_pid = 0;
+    char game_dir[PATH_MAX] = "";
+    char spawn_error[256] = "";
+    bool launched =
+        launch_auto_attempt(appid, policy, game_dir, sizeof(game_dir), &spawned_pid, spawn_error, sizeof(spawn_error));
+    jsonbuf_append(&body, ",\"pid\":");
+    char pid_text[32];
+    int pn = snprintf(pid_text, sizeof(pid_text), "%ld", (long)spawned_pid);
+    if (pn > 0 && (size_t)pn < sizeof(pid_text)) {
+        jsonbuf_append(&body, pid_text);
+    } else {
+        jsonbuf_append(&body, "0");
+    }
+    jsonbuf_append(&body, ",\"launched\":");
+    jsonbuf_append(&body, launched ? "true" : "false");
+    if (game_dir[0] != '\0') {
+        jsonbuf_append(&body, ",\"game_dir\":");
+        jsonbuf_append_escaped(&body, game_dir);
+    }
+    if (!launched) {
+        jsonbuf_append(&body, ",\"launch_error\":");
+        jsonbuf_append_escaped(&body, spawn_error);
+        if (spawned_pid == 0)
+            metalsharp_app_log("launch-auto: appid %u spawn failed: %s", appid, spawn_error);
+    } else {
+        metalsharp_app_log("launch-auto: appid %u spawned pid %ld", appid, (long)spawned_pid);
+    }
     jsonbuf_append(&body, "}");
     if (!body.ok) {
         jsonbuf_free(&body);
@@ -1103,9 +1464,6 @@ static MetalsharpResponse* handle_launch_auto_impl(const HttpRequest* req) {
     if (resp == NULL) {
         return make_error_response("launch-auto: out of memory");
     }
-    /* TODO: actual Wine process spawning is intentionally stubbed;
-     * the Electron shell (or a future C adapter) uses the env_pairs
-     * above to launch bin/metalsharp-wine directly. */
     return resp;
 }
 

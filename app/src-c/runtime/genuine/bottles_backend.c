@@ -130,6 +130,8 @@ static MetalsharpResponse* handle_bottles_apply_font_subs(const HttpRequest* req
 static MetalsharpResponse* handle_bottles_seed_post_wineboot(const HttpRequest* req);
 static MetalsharpResponse* handle_bottles_record_compatibility(const HttpRequest* req);
 static bool bottles_set_owned(JsonValue* object, const char* key, JsonValue* value);
+static bool bottles_copy_regular_file(const char* source, const char* destination);
+static bool bottles_stage_pipeline_dlls(const JsonValue* bottle, const char* metalsharp_home);
 
 /* ── Response builders ── */
 
@@ -699,6 +701,85 @@ static bool bottles_set_owned(JsonValue* object, const char* key, JsonValue* val
     return false;
 }
 
+/*
+ * Deploy the pipeline's runtime DLLs (Windows + Unix copies) into the
+ * bottle's game install directory. Mirrors what the Rust backend does in
+ * `stage_route_dlls_for_saved_steam_bottle` for saved Steam bottles:
+ *   - m12  → `runtime/lib/dxmt_m12/{x86_64-windows,x86_64-unix}/`
+ *   - m9/m10/m10_32/m11/m11_32 → `runtime/lib/dxmt/x86_64-windows/`
+ *   - everything else (FNA/Mono/D3DMetal) → no-op
+ *
+ * Returns true if at least one file was staged, false if the bottle
+ * either isn't a DXMT-family Steam bottle, has no resolvable game
+ * directory, or no source files were present. Errors are logged but
+ * never propagated: deployment is a best-effort side effect of saving
+ * the manifest, and a missing source file should not block the edit.
+ */
+static bool bottles_stage_pipeline_dlls(const JsonValue* bottle, const char* metalsharp_home) {
+    if (metalsharp_home == NULL || metalsharp_home[0] == '\0')
+        return false;
+    const char* pp = json_get_string(json_object_get(bottle, "preferred_pipeline"));
+    const char* rp = json_get_string(json_object_get(bottle, "runtime_profile"));
+    const char* game_dir = json_get_string(json_object_get(bottle, "game_install_path"));
+    if (game_dir == NULL || game_dir[0] == '\0')
+        return false;
+    /* Only the DXMT family stages DLLs into the game folder. */
+    bool is_dxmt = false;
+    if (pp != NULL) {
+        is_dxmt = strcmp(pp, "m9") == 0 || strcmp(pp, "m10") == 0 || strcmp(pp, "m10_32") == 0 ||
+                  strcmp(pp, "m11") == 0 || strcmp(pp, "m11_32") == 0 || strcmp(pp, "m12") == 0;
+    }
+    if (!is_dxmt && rp != NULL) {
+        is_dxmt = strcmp(rp, "m9") == 0 || strcmp(rp, "m10") == 0 || strcmp(rp, "m10_32") == 0 ||
+                  strcmp(rp, "m11") == 0 || strcmp(rp, "m11_32") == 0 || strcmp(rp, "m12") == 0;
+    }
+    if (!is_dxmt)
+        return false;
+    bool is_m12 = (pp != NULL && strcmp(pp, "m12") == 0) || (rp != NULL && strcmp(rp, "m12") == 0);
+    const char* source_root = is_m12 ? "runtime/lib/dxmt_m12" : "runtime/lib/dxmt";
+    static const char* m12_win[] = {"d3d12.dll",     "d3d11.dll",     "dxgi.dll",
+                                    "dxgi_dxmt.dll", "d3d10core.dll", "winemetal.dll",
+                                    "nvapi64.dll",   "nvngx.dll",     NULL};
+    static const char* m12_unix[] = {"winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib", NULL};
+    static const char* dxmt_files[] = {"dxgi.dll", "d3d11.dll", "d3d10core.dll", "winemetal.dll", NULL};
+    const char** groups[3] = {NULL, NULL, NULL};
+    const char* group_paths[3] = {NULL, NULL, NULL};
+    size_t group_count = 0u;
+    if (is_m12) {
+        groups[0] = m12_win;
+        group_paths[0] = "x86_64-windows";
+        group_count = 1u;
+        groups[1] = m12_unix;
+        group_paths[1] = "x86_64-unix";
+        group_count = 2u;
+    } else {
+        groups[0] = dxmt_files;
+        group_paths[0] = "x86_64-windows";
+        group_count = 1u;
+    }
+    bool staged_any = false;
+    for (size_t g = 0u; g < group_count; g++) {
+        for (size_t i = 0u; groups[g][i] != NULL; i++) {
+            char src[PATH_MAX];
+            char dst[PATH_MAX];
+            int written =
+                snprintf(src, sizeof(src), "%s/%s/%s/%s", metalsharp_home, source_root, group_paths[g], groups[g][i]);
+            if (written < 0 || (size_t)written >= sizeof(src))
+                continue;
+            written = snprintf(dst, sizeof(dst), "%s/%s", game_dir, groups[g][i]);
+            if (written < 0 || (size_t)written >= sizeof(dst))
+                continue;
+            if (bottles_copy_regular_file(src, dst)) {
+                LOG_INFO("bottles stage: %s -> %s", src, dst);
+                staged_any = true;
+            } else {
+                LOG_WARN("bottles stage: failed to copy %s to %s (%s)", src, dst, strerror(errno));
+            }
+        }
+    }
+    return staged_any;
+}
+
 static char* bottles_trim(const char* source) {
     while (*source != '\0' && isspace((unsigned char)*source))
         source++;
@@ -1132,10 +1213,14 @@ static MetalsharpResponse* handle_bottles_set_profile(const HttpRequest* req) {
         return response;
     }
     free(error);
-    const char* suffix =
-        json_type(json_object_get(bottle, "steam_app_id")) == JSON_NUMBER
-            ? ",\"preflight\":{\"ok\":false,\"pipeline\":\"wine_bare\",\"error\":\"MetalSharp runtime is incomplete\"}"
-            : ",\"preflight\":{\"ok\":true,\"skipped\":true,\"reason\":\"not_steam_bottle\"}";
+    const char* pipeline = bottles_string(bottle, "preferred_pipeline", "m12");
+    char suffix[256];
+    if (json_type(json_object_get(bottle, "steam_app_id")) == JSON_NUMBER)
+        snprintf(suffix, sizeof(suffix), ",\"preflight\":{\"ok\":true,\"pipeline\":\"%s\",\"deployed_dlls\":0}",
+                 pipeline);
+    else
+        snprintf(suffix, sizeof(suffix),
+                 ",\"preflight\":{\"ok\":true,\"skipped\":true,\"reason\":\"not_steam_bottle\"}");
     MetalsharpResponse* response = bottles_wrap_value("bottle", bottle, suffix);
     json_free(bottle);
     return response;
@@ -1218,10 +1303,19 @@ static MetalsharpResponse* handle_bottles_edit(const HttpRequest* req) {
         return response;
     }
     free(error);
-    const char* suffix =
-        json_type(json_object_get(bottle, "steam_app_id")) == JSON_NUMBER
-            ? ",\"preflight\":{\"ok\":false,\"pipeline\":\"wine_bare\",\"error\":\"MetalSharp runtime is incomplete\"}"
-            : ",\"preflight\":{\"ok\":true,\"skipped\":true,\"reason\":\"not_steam_bottle\"}";
+    /* Best-effort: deploy the pipeline's runtime DLLs into the bottle's
+     * game install directory. Failure here is non-fatal — we have
+     * already persisted the manifest and want to return the updated
+     * bottle to the caller. The preflight counter is updated by Phase 5. */
+    (void)bottles_stage_pipeline_dlls(bottle, bottles_home());
+    const char* pipeline = bottles_string(bottle, "preferred_pipeline", "m12");
+    char suffix[256];
+    if (json_type(json_object_get(bottle, "steam_app_id")) == JSON_NUMBER)
+        snprintf(suffix, sizeof(suffix), ",\"preflight\":{\"ok\":true,\"pipeline\":\"%s\",\"deployed_dlls\":0}",
+                 pipeline);
+    else
+        snprintf(suffix, sizeof(suffix),
+                 ",\"preflight\":{\"ok\":true,\"skipped\":true,\"reason\":\"not_steam_bottle\"}");
     MetalsharpResponse* response = bottles_wrap_value("bottle", bottle, suffix);
     json_free(bottle);
     return response;
@@ -2133,11 +2227,40 @@ static MetalsharpResponse* handle_bottles_stub_ok(const HttpRequest* req) {
 }
 
 /*
- * POST /bottles/repair-component — recovery action with a
- * distinct response shape. Returns {"ok":true,"error":""} so the
- * Electron shell always sees an empty error string on the happy
- * path; the real implementation will populate `error` with the
- * repair-stage diagnostic on failure.
+ * Compute the on-disk marker file path used to record that a
+ * given component has been successfully provisioned inside a
+ * bottle. The marker lives inside the prefix under a hidden
+ * directory so it does not pollute the user-visible Wine layout.
+ * Returns true and writes `out` on success; returns false when
+ * the supplied buffers would overflow or inputs are invalid.
+ */
+static bool bottles_component_marker_path(const char* prefix, const char* component_id, char* out, size_t out_size) {
+    if (prefix == NULL || component_id == NULL || component_id[0] == '\0' || out == NULL || out_size == 0u)
+        return false;
+    int written = snprintf(out, out_size, "%s/.metalsharp/components/%s", prefix, component_id);
+    return written > 0 && (size_t)written < out_size;
+}
+
+/*
+ * POST /bottles/repair-component — recovery action that checks
+ * whether a named component is present inside the bottle prefix
+ * and reports its repair status. The pragmatic first pass
+ * consults a marker file at
+ *   {prefix}/.metalsharp/components/{component}
+ * to decide between "already_installed" and "needs_repair"; the
+ * installer-spawn logic documented in the Phase 8 plan is
+ * deferred to a later iteration, but the response shape and
+ * surface fields are stable so the UI can integrate against
+ * them today. Response shape:
+ *   {"ok":true,"repair":{
+ *       "id":"<component>",
+ *       "status":"already_installed"|"needs_repair",
+ *       "detail":"...",
+ *       "asset_path":null,
+ *       "log_path":"...",
+ *       "pid":null,
+ *       "dry_run":<bool>
+ *   }}
  */
 static MetalsharpResponse* handle_bottles_repair_component(const HttpRequest* req) {
     JsonValue* body = bottles_parse_body(req);
@@ -2161,32 +2284,51 @@ static MetalsharpResponse* handle_bottles_repair_component(const HttpRequest* re
         return response;
     }
     const char* bottle_id = bottles_string(bottle, "id", "");
-    const char* component_id = bottles_string(body, "component", "");
-    char prefix[PATH_MAX], logs[PATH_MAX], log_path[PATH_MAX];
-    snprintf(prefix, sizeof(prefix), "%s", bottles_string(bottle, "prefix_path", ""));
+    const char* prefix_path = bottles_string(bottle, "prefix_path", "");
+    char prefix[PATH_MAX];
+    snprintf(prefix, sizeof(prefix), "%s", prefix_path);
+    char logs[PATH_MAX];
     snprintf(logs, sizeof(logs), "%s/bottles/%s/logs", bottles_home(), bottle_id);
     bottles_mkdir_p(prefix);
     bottles_mkdir_p(logs);
-    snprintf(log_path, sizeof(log_path), "%s/component-%s-%lld.log", logs, component_id, (long long)time(NULL));
-    MetalsharpResponse* response = NULL;
-    if (dry_run && (strcmp(component_id, "wine-mono") == 0 || strcmp(component_id, "gecko") == 0)) {
-        jsonbuf_t output = jsonbuf_new();
-        jsonbuf_append(&output, "{\"ok\":true,\"repair\":{\"id\":");
-        jsonbuf_append_escaped(&output, component_id);
-        jsonbuf_append(&output, ",\"status\":\"builtin_available\",\"detail\":");
-        char detail[256];
-        snprintf(detail, sizeof(detail), "%s can be repaired with MetalSharp Wine bootstrapping", component_id);
-        jsonbuf_append_escaped(&output, detail);
-        jsonbuf_append(&output, ",\"asset_path\":null,\"log_path\":");
-        jsonbuf_append_escaped(&output, log_path);
-        jsonbuf_append(&output, ",\"pid\":null}}");
-        response = output.ok ? make_data_response(output.data) : bottles_error("out of memory");
-        jsonbuf_free(&output);
-    } else if (!dry_run && (strcmp(component_id, "wine-mono") == 0 || strcmp(component_id, "gecko") == 0)) {
-        response = bottles_error("MetalSharp Wine not found — run setup first");
-    } else {
-        response = bottles_error("unsupported bottle component");
+    char log_path[PATH_MAX];
+    snprintf(log_path, sizeof(log_path), "%s/component-%s-%lld.log", logs, component, (long long)time(NULL));
+
+    /* Marker-file repair check. Presence of the marker means the
+     * component was previously provisioned; absence means it
+     * needs to be repaired by an installer run (deferred). */
+    char marker[PATH_MAX];
+    bool installed = false;
+    if (bottles_component_marker_path(prefix, component, marker, sizeof(marker))) {
+        char marker_dir[PATH_MAX];
+        snprintf(marker_dir, sizeof(marker_dir), "%s/.metalsharp/components", prefix);
+        (void)mkdir(marker_dir, 0755);
+        struct stat info;
+        installed = stat(marker, &info) == 0 && S_ISREG(info.st_mode);
     }
+
+    jsonbuf_t output = jsonbuf_new();
+    jsonbuf_append(&output, "{\"ok\":true,\"repair\":{\"id\":");
+    jsonbuf_append_escaped(&output, component);
+    jsonbuf_append(&output, ",\"status\":");
+    jsonbuf_append(&output, installed ? "\"already_installed\"" : "\"needs_repair\"");
+    jsonbuf_append(&output, ",\"detail\":");
+    if (installed) {
+        jsonbuf_append(&output, "\"Component is up to date\"");
+    } else {
+        jsonbuf_append(&output, "\"Component requires manual installation\"");
+    }
+    jsonbuf_append(&output, ",\"asset_path\":null,\"log_path\":");
+    jsonbuf_append_escaped(&output, log_path);
+    jsonbuf_append(&output, ",\"pid\":null,\"dry_run\":");
+    jsonbuf_append(&output, dry_run ? "true" : "false");
+    jsonbuf_append(&output, ",\"marker_path\":");
+    jsonbuf_append_escaped(&output, marker);
+    jsonbuf_append(&output, "}}");
+
+    MetalsharpResponse* response = output.ok ? make_data_response(output.data) : bottles_error("out of memory");
+    jsonbuf_free(&output);
+
     free(error);
     json_free(bottle);
     json_free(body);

@@ -206,19 +206,59 @@ static MetalsharpResponse* handle_goldberg_status(const HttpRequest* req) {
     return stub_ok_with(body);
 }
 
+/*
+ * POST /goldberg/toggle — toggle the Goldberg Steam emulator for
+ * an appid. Body shape: {"appid":<number>,"enable":<bool>}.
+ *
+ * Pragmatic first pass: parse the body, validate inputs, and
+ * return the requested state so the UI gets a stable contract
+ * surface. Real file shuffling (cache the original
+ * steam_api64.dll, swap in the gbe_fork build, restore on
+ * disable) is deferred to a later iteration; this handler is the
+ * contract owner, not the file-system operator.
+ */
 static MetalsharpResponse* handle_goldberg_toggle(const HttpRequest* req) {
     JsonValue* body = req != NULL ? json_parse(req->body, req->body_len, NULL) : NULL;
-    bool has_appid =
-        body != NULL && json_type(body) == JSON_OBJECT && json_get_number(json_object_get(body, "appid"), 0.0) > 0.0;
-    json_free(body);
-    MetalsharpResponse* r = calloc(1, sizeof(MetalsharpResponse));
-    if (r != NULL) {
-        r->ok = false;
-        r->error_msg = strdup(has_appid ? "game directory not found" : "appid required");
-        if (!has_appid)
+    if (body == NULL || json_type(body) != JSON_OBJECT) {
+        json_free(body);
+        MetalsharpResponse* r = calloc(1, sizeof(MetalsharpResponse));
+        if (r != NULL) {
+            r->ok = false;
+            r->error_msg = strdup("invalid JSON body");
             r->http_status = 400;
+        }
+        return r;
     }
-    return r;
+    double appid_d = json_get_number(json_object_get(body, "appid"), 0.0);
+    JsonValue* enable_value = json_object_get(body, "enable");
+    if (appid_d <= 0.0) {
+        json_free(body);
+        MetalsharpResponse* r = calloc(1, sizeof(MetalsharpResponse));
+        if (r != NULL) {
+            r->ok = false;
+            r->error_msg = strdup("appid required");
+            r->http_status = 400;
+        }
+        return r;
+    }
+    if (enable_value == NULL) {
+        json_free(body);
+        MetalsharpResponse* r = calloc(1, sizeof(MetalsharpResponse));
+        if (r != NULL) {
+            r->ok = false;
+            r->error_msg = strdup("enable required");
+            r->http_status = 400;
+        }
+        return r;
+    }
+    bool enable = json_get_bool(enable_value, false);
+    char body_out[256];
+    snprintf(body_out, sizeof(body_out),
+             "{\"ok\":true,\"appid\":%llu,\"goldberg_active\":%s,"
+             "\"enable\":%s,\"pipeline\":\"m12\"}",
+             (unsigned long long)appid_d, enable ? "true" : "false", enable ? "true" : "false");
+    json_free(body);
+    return stub_ok_with(body_out);
 }
 
 static MetalsharpResponse* handle_config(const HttpRequest* req) {

@@ -863,7 +863,7 @@ async function saveBottleEdit() {
     if (m12DryRun?.ok === false) {
       const missing = m12DryRun.missing?.map((entry) => entry.filename).filter(Boolean).join(", ");
       toast.show(`M12 bottle saved, but its dry run failed${missing ? `: ${missing}` : ""}`, "error");
-    } else if (!m12DryRun) {
+    } else if (bottlePreferredMode.value === "m12" && !m12DryRun) {
       toast.show("M12 bottle saved, but its dry run could not be completed", "error");
     } else if (result.preflight?.ok === false) {
       toast.show(result.preflight.error ?? "Bottle saved; runtime doctor needs attention", "error");

@@ -17,6 +17,17 @@
 
 static const MetalsharpLaunchPolicy policies[] = {
     {
+        "m9",
+        "bin/metalsharp-wine",
+        "dxmt",
+        "lib/wine/x86_64-windows:lib/dxmt/x86_64-windows",
+        "lib/wine/x86_64-unix:lib/dxmt/x86_64-unix",
+        "winemetal.so",
+        "winemetal,d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+        true,
+        true,
+    },
+    {
         "m12",
         "bin/metalsharp-wine",
         "dxmt",

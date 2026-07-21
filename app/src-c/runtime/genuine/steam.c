@@ -178,6 +178,7 @@ static MetalsharpResponse* handle_steam_watch_steamapps(const HttpRequest* req);
  * uninstall, bridge, compatdata, runtime-doctor, and mac-*
  * route until the real backend adapters land. */
 static MetalsharpResponse* handle_steam_stub_ok(const HttpRequest* req);
+static void steam_json_escape(char* output, size_t output_size, const char* input);
 static bool steam_is_wine_steam_running(void);
 static bool steam_find_wine(char* output, size_t output_size);
 static MetalsharpResponse* handle_steam_launch(const HttpRequest* req);
@@ -708,18 +709,222 @@ static MetalsharpResponse* handle_steam_runtime_doctor(const HttpRequest* req) {
         snprintf(err, sizeof(err), "{\"ok\":false,\"error\":\"appid required\"}");
         return steam_route_response(err, 400);
     }
-    /* Build a minimal SteamRuntimeReport so the bottle dropdown works. */
+
+    /* Default component list per runtime profile. Each list is a
+     * NULL-terminated array of component identifiers; the inspector
+     * walks the list and maps each id to a marker file on disk. The
+     * order matches the manifest ordering in bottles_catalogs.h so
+     * the UI renders components in a stable sequence. */
+    static const char* const m9_components[] = {"d3d9", "vcrun2019_x64", "vcrun2019_x86", "directx_jun2010", NULL};
+    static const char* const m10_components[] = {"d3d10", "d3d10_1", "dxgi", "vcrun2019_x64", "vcrun2019_x86", NULL};
+    static const char* const m10_32_components[] = {"d3d10core", "d3d10_1", "winemetal", "vcrun2019_x86", NULL};
+    static const char* const m11_components[] = {"d3d11",           "dxgi", "vcrun2019_x64", "vcrun2019_x86",
+                                                 "directx_jun2010", NULL};
+    static const char* const m11_32_components[] = {"d3d11", "dxgi", "winemetal", "vcrun2019_x86", NULL};
+    static const char* const m12_components[] = {"m12_d3d12", "m12_d3d11",     "m12_d3d10core", "m12_dxgi_dxmt",
+                                                 "m12_dxgi",  "m12_winemetal", "m12_gpu_stubs", NULL};
+
+    /* Marker-file table: one known DLL per component id, resolved
+     * relative to the prefix. Inspecting a single marker keeps the
+     * check cheap while still proving the installer placed the
+     * component files where the runtime will load them from. */
+    typedef struct {
+        const char* id;
+        const char* marker;
+    } SteamComponentMarker;
+    static const SteamComponentMarker markers[] = {
+        {"d3d9", "drive_c/windows/system32/d3d9.dll"},
+        {"d3d10", "drive_c/windows/system32/d3d10.dll"},
+        {"d3d10_1", "drive_c/windows/system32/d3d10_1.dll"},
+        {"d3d10core", "drive_c/windows/system32/d3d10core.dll"},
+        {"d3d11", "drive_c/windows/system32/d3d11.dll"},
+        {"dxgi", "drive_c/windows/system32/dxgi.dll"},
+        {"winemetal", "drive_c/windows/system32/winemetal.dll"},
+        {"vcrun2019_x64", "drive_c/windows/system32/vcruntime140.dll"},
+        {"vcrun2019_x86", "drive_c/windows/syswow64/vcruntime140.dll"},
+        {"directx_jun2010", "drive_c/windows/system32/d3dx9_43.dll"},
+        {"m12_d3d12", "drive_c/windows/system32/d3d12.dll"},
+        {"m12_d3d11", "drive_c/windows/system32/d3d11.dll"},
+        {"m12_d3d10core", "drive_c/windows/system32/d3d10core.dll"},
+        {"m12_dxgi_dxmt", "drive_c/windows/system32/dxgi.dll"},
+        {"m12_dxgi", "drive_c/windows/system32/dxgi.dll"},
+        {"m12_winemetal", "drive_c/windows/system32/winemetal.dll"},
+        {"m12_gpu_stubs", "drive_c/windows/system32/d3dcompiler_47.dll"},
+    };
+
+    /* Read the saved bottle manifest so the runtime report
+     * carries the persisted preferred_pipeline back to the
+     * frontend — otherwise saveBottleEdit immediately followed
+     * by runRuntimeDoctor would reset the dropdown to the
+     * static default. The same read also surfaces prefix_path,
+     * game_install_path, and runtime_profile that drive the
+     * component inspection below. */
     char bottle_id[64];
     snprintf(bottle_id, sizeof(bottle_id), "steam_%u", appid);
-    char buffer[2048];
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL || home[0] == '\0')
+        home = getenv("HOME");
+    char preferred[64] = "";
+    char runtime_profile[64] = "";
+    char bottle_name[128] = "";
+    char prefix_path[PATH_MAX] = "";
+    char game_install_path[PATH_MAX] = "";
+    bool prefix_recorded = false;
+    if (home != NULL) {
+        char bottle_path[PATH_MAX];
+        snprintf(bottle_path, sizeof(bottle_path), "%s/bottles/%s/bottle.json", home, bottle_id);
+        FILE* bottle_file = fopen(bottle_path, "rb");
+        if (bottle_file != NULL) {
+            char bottle_data[8192];
+            size_t b_len = fread(bottle_data, 1u, sizeof(bottle_data) - 1u, bottle_file);
+            bottle_data[b_len] = '\0';
+            fclose(bottle_file);
+            JsonValue* bottle = json_parse(bottle_data, b_len, NULL);
+            if (bottle != NULL && json_type(bottle) == JSON_OBJECT) {
+                const char* pp = json_get_string(json_object_get(bottle, "preferred_pipeline"));
+                const char* rp = json_get_string(json_object_get(bottle, "runtime_profile"));
+                const char* bn = json_get_string(json_object_get(bottle, "name"));
+                const char* px = json_get_string(json_object_get(bottle, "prefix_path"));
+                const char* gp = json_get_string(json_object_get(bottle, "game_install_path"));
+                if (pp != NULL && pp[0] != '\0')
+                    snprintf(preferred, sizeof(preferred), "%s", pp);
+                else if (rp != NULL && rp[0] != '\0')
+                    snprintf(preferred, sizeof(preferred), "%s", rp);
+                if (rp != NULL && rp[0] != '\0')
+                    snprintf(runtime_profile, sizeof(runtime_profile), "%s", rp);
+                if (bn != NULL)
+                    snprintf(bottle_name, sizeof(bottle_name), "%s", bn);
+                if (px != NULL && px[0] != '\0') {
+                    snprintf(prefix_path, sizeof(prefix_path), "%s", px);
+                    prefix_recorded = true;
+                }
+                if (gp != NULL && gp[0] != '\0')
+                    snprintf(game_install_path, sizeof(game_install_path), "%s", gp);
+            }
+            json_free(bottle);
+        }
+    }
+
+    /* Resolve prefix_path: prefer the persisted manifest field,
+     * otherwise fall back to the canonical
+     * METALSHARP_HOME/bottles/<bottle_id>/prefix layout. Without
+     * this fallback a brand-new bottle (no prefix_path yet)
+     * would skip every component check. */
+    if (!prefix_recorded && home != NULL)
+        snprintf(prefix_path, sizeof(prefix_path), "%s/bottles/%s/prefix", home, bottle_id);
+
+    /* Pick the default component list for this bottle. Prefer the
+     * runtime_profile field; fall back to the persisted
+     * preferred_pipeline. Unknown profiles leave defaults NULL so
+     * the inspector emits an empty array rather than fabricating
+     * a list of components that does not apply. */
+    const char* const* defaults = NULL;
+    const char* profile_key = (runtime_profile[0] != '\0') ? runtime_profile : preferred;
+    if (profile_key[0] != '\0') {
+        if (strcmp(profile_key, "m9") == 0)
+            defaults = m9_components;
+        else if (strcmp(profile_key, "m10") == 0)
+            defaults = m10_components;
+        else if (strcmp(profile_key, "m10_32") == 0)
+            defaults = m10_32_components;
+        else if (strcmp(profile_key, "m11") == 0)
+            defaults = m11_components;
+        else if (strcmp(profile_key, "m11_32") == 0)
+            defaults = m11_32_components;
+        else if (strcmp(profile_key, "m12") == 0)
+            defaults = m12_components;
+    }
+
+    /* Inspect each component: marker present -> "installed";
+     * marker absent (or unknown component id, or no prefix
+     * recorded at all) -> "needs_repair". The action array only
+     * surfaces components that need attention so the UI can offer
+     * a re-install row for each. */
+    char components_json[3072] = "";
+    char actions_json[2048] = "";
+    size_t comp_used = 0;
+    size_t act_used = 0;
+    int comp_count = 0;
+    int act_count = 0;
+    if (defaults != NULL && prefix_path[0] != '\0') {
+        char marker_path[PATH_MAX];
+        for (int i = 0; defaults[i] != NULL; i++) {
+            const char* comp_id = defaults[i];
+            const char* rel_marker = NULL;
+            for (size_t m = 0; m < sizeof(markers) / sizeof(markers[0]); m++) {
+                if (strcmp(markers[m].id, comp_id) == 0) {
+                    rel_marker = markers[m].marker;
+                    break;
+                }
+            }
+            const char* state = "needs_repair";
+            if (rel_marker != NULL) {
+                snprintf(marker_path, sizeof(marker_path), "%s/%s", prefix_path, rel_marker);
+                if (access(marker_path, F_OK) == 0)
+                    state = "installed";
+            }
+            int written = snprintf(components_json + comp_used, sizeof(components_json) - comp_used,
+                                   "%s{\"id\":\"%s\",\"state\":\"%s\"}", comp_count > 0 ? "," : "", comp_id, state);
+            if (written < 0 || (size_t)written >= sizeof(components_json) - comp_used)
+                break;
+            comp_used += (size_t)written;
+            comp_count++;
+            if (strcmp(state, "installed") != 0) {
+                written = snprintf(actions_json + act_used, sizeof(actions_json) - act_used,
+                                   "%s{\"id\":\"%s\",\"status\":\"%s\",\"detail\":\"Component needs installation\"}",
+                                   act_count > 0 ? "," : "", comp_id, state);
+                if (written < 0 || (size_t)written >= sizeof(actions_json) - act_used)
+                    break;
+                act_used += (size_t)written;
+                act_count++;
+            }
+        }
+    }
+
+    char pp_json[128];
+    if (preferred[0] != '\0')
+        snprintf(pp_json, sizeof(pp_json), "\"%s\"", preferred);
+    else
+        snprintf(pp_json, sizeof(pp_json), "null");
+    char bn_escaped[256];
+    steam_json_escape(bn_escaped, sizeof(bn_escaped), bottle_name);
+    char bn_json[320];
+    if (bottle_name[0] != '\0')
+        snprintf(bn_json, sizeof(bn_json), "\"%s\"", bn_escaped);
+    else
+        snprintf(bn_json, sizeof(bn_json), "null");
+    char prefix_escaped[PATH_MAX];
+    steam_json_escape(prefix_escaped, sizeof(prefix_escaped), prefix_path);
+    char prefix_json[PATH_MAX + 16];
+    snprintf(prefix_json, sizeof(prefix_json), "\"%s\"", prefix_escaped);
+    char rp_json[128];
+    if (runtime_profile[0] != '\0')
+        snprintf(rp_json, sizeof(rp_json), "\"%s\"", runtime_profile);
+    else
+        snprintf(rp_json, sizeof(rp_json), "%s", pp_json);
+    char gip_escaped[PATH_MAX];
+    steam_json_escape(gip_escaped, sizeof(gip_escaped), game_install_path);
+    char gip_json[PATH_MAX + 16];
+    if (game_install_path[0] != '\0')
+        snprintf(gip_json, sizeof(gip_json), "\"%s\"", gip_escaped);
+    else
+        snprintf(gip_json, sizeof(gip_json), "null");
+
+    /* runtime_assets mirrors the Rust handler: a list of files
+     * discovered under game_install_path. The backend does not
+     * yet walk the install path; emit an empty list so the field
+     * contract is preserved for the frontend without inventing
+     * data the inspector cannot prove. */
+    char buffer[8192];
     int n = snprintf(buffer, sizeof(buffer),
                      "{\"ok\":true,\"report\":{"
-                     "\"appid\":%u,\"bottle_id\":\"%s\",\"bottle_name\":null,"
-                     "\"preferred_pipeline\":null,\"pipeline\":\"m12\",\"runtime_profile\":\"dxmt_m12\","
-                     "\"prefix_path\":\"\",\"game_install_path\":null,"
-                     "\"runtime_assets\":[],\"components\":[],\"actions\":[]"
+                     "\"appid\":%u,\"bottle_id\":\"%s\",\"bottle_name\":%s,"
+                     "\"preferred_pipeline\":%s,\"pipeline\":%s,\"runtime_profile\":%s,"
+                     "\"prefix_path\":%s,\"game_install_path\":%s,"
+                     "\"runtime_assets\":[],\"components\":[%s],\"actions\":[%s]"
                      "}}",
-                     appid, bottle_id);
+                     appid, bottle_id, bn_json, pp_json, pp_json, rp_json, prefix_json, gip_json, components_json,
+                     actions_json);
     if (n < 0 || (size_t)n >= sizeof(buffer))
         return steam_route_response("{\"ok\":false,\"error\":\"response too large\"}", 500);
     return steam_route_response(buffer, 200);
