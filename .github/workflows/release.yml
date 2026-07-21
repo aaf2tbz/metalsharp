@@ -21,7 +21,7 @@ jobs:
       group: metalsharp-developer-sdk-bundles
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download and verify release split bundles
         run: METALSHARP_REPAIR_BUNDLES=0 METALSHARP_SKIP_DEVELOPER_SDK_BUNDLE=1 tools/dmg/create-bundles.sh
@@ -89,7 +89,7 @@ jobs:
     needs: [developer-sdk]
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node
         uses: actions/setup-node@v4
