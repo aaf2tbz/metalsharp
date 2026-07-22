@@ -48,7 +48,7 @@ The PE ntdll modules, Wine loader, Wine server, graphics libraries, and all unre
 
 ## Phased implementation
 
-### Phase 0: Preserve and characterize the installed runtime
+### Phase 0: Preserve and characterize the installed runtime — Complete
 
 1. Record hashes, architecture, Mach-O load commands, exported symbols, deployment target, and version for the installed ntdll.
 2. Back up the installed ntdll outside the runtime directory.
@@ -58,7 +58,9 @@ The PE ntdll modules, Wine loader, Wine server, graphics libraries, and all unre
 
 **Completion gate:** The original ntdll can be restored immediately and the baseline disposable runtime passes Wine startup tests.
 
-### Phase 1: Incrementally rebuild only x86_64 Unix ntdll
+**Evidence:** [`ubisoft-connect-phase-0-1-evidence.md`](ubisoft-connect-phase-0-1-evidence.md)
+
+### Phase 1: Incrementally rebuild only x86_64 Unix ntdll — Complete
 
 1. Create a separate x86_64 Wine 11.5 build configuration compatible with the installed runtime.
 2. Use installed MetalSharp build tools where appropriate, including `~/.metalsharp/runtime/wine/bin/winebuild`.
@@ -77,6 +79,8 @@ The PE ntdll modules, Wine loader, Wine server, graphics libraries, and all unre
 7. Swap the patched ntdll into the disposable runtime first, then atomically replace the installed ntdll only after validation.
 
 **Completion gate:** The patched x86_64 ntdll passes startup and write-copy tests without changing any other Wine component.
+
+**Evidence:** [`ubisoft-connect-phase-0-1-evidence.md`](ubisoft-connect-phase-0-1-evidence.md)
 
 ### Phase 2: Prove Ubisoft Connect manually
 

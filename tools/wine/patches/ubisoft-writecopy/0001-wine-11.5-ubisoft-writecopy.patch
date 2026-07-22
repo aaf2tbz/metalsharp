@@ -1,0 +1,123 @@
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 9bc040e..5e84e5b 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -1856,6 +1856,30 @@ static ULONG_PTR get_image_address(void)
+ /***********************************************************************
+  *           start_main_thread
+  */
++#ifdef __APPLE__
++/* Preserve the MetalSharp runtime's compatibility database autoload surface. */
++static void load_metalsharp_mscompatdb(void)
++{
++    const char *root = getenv( "MS_ROOT" );
++    char path[PATH_MAX];
++    void *handle = NULL;
++
++    if (root && *root)
++    {
++        snprintf( path, sizeof(path), "%s/lib/wine/%s/mscompatdb.so", root, get_so_dir( current_machine ) );
++        handle = dlopen( path, RTLD_NOW );
++    }
++    if (!handle && dll_dir)
++    {
++        snprintf( path, sizeof(path), "%s/mscompatdb.so", ntdll_dir );
++        handle = dlopen( path, RTLD_NOW );
++    }
++
++    if (handle) fprintf( stderr, "mscompatdb: loaded from %s\n", path );
++    else if ((root && *root) || dll_dir) fprintf( stderr, "mscompatdb: not found\n" );
++}
++#endif
++
+ static void start_main_thread(void)
+ {
+     TEB *teb = virtual_alloc_first_teb();
+@@ -1863,6 +1887,9 @@ static void start_main_thread(void)
+     signal_init_threading();
+     dbg_init();
+     startup_info_size = server_init_process();
++#ifdef __APPLE__
++    load_metalsharp_mscompatdb();
++#endif
+     virtual_map_user_shared_data();
+     init_cpu_info();
+     init_files();
+@@ -2222,6 +2249,16 @@ static void check_command_line( int argc, char *argv[] )
+ }
+
+
++BOOL simulate_writecopy;
++
++static void init_writecopy_hacks(void)
++{
++    const char *env = getenv( "WINE_SIMULATE_WRITECOPY" );
++
++    if (env) simulate_writecopy = atoi( env );
++    else if (main_argc > 1 && strstr( main_argv[1], "UplayWebCore.exe" )) simulate_writecopy = TRUE;
++}
++
+ /***********************************************************************
+  *           __wine_main
+  *
+@@ -2235,6 +2272,7 @@ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
+     init_paths();
+     if (!getenv( "WINELOADERNOEXEC" ) || argc <= 1) check_command_line( argc, argv );
+     unsetenv( "WINELOADERNOEXEC" );
++    init_writecopy_hacks();
+
+ #ifdef RLIMIT_NOFILE
+     set_max_limit( RLIMIT_NOFILE );
+diff --git a/dlls/ntdll/unix/unix_private.h b/dlls/ntdll/unix/unix_private.h
+index a9e8f52..ad6b497 100644
+--- a/dlls/ntdll/unix/unix_private.h
++++ b/dlls/ntdll/unix/unix_private.h
+@@ -197,6 +197,7 @@ extern const WCHAR system_dir[];
+ extern unsigned int supported_machines_count;
+ extern USHORT supported_machines[8];
+ extern BOOL process_exiting;
++extern BOOL simulate_writecopy;
+ extern HANDLE keyed_event;
+ extern int inproc_device_fd;
+ extern timeout_t server_start_time;
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 781598f..bab03ef 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -138,6 +138,7 @@ struct file_view
+ #define VPROT_GUARD      0x10
+ #define VPROT_COMMITTED  0x20
+ #define VPROT_WRITEWATCH 0x40
++#define VPROT_COPIED     0x80
+ /* per-mapping protection flags */
+ #define VPROT_ARM64EC          0x0100  /* view may contain ARM64EC code */
+ #define VPROT_SYSTEM           0x0200  /* system view (underlying mmap not under our control) */
+@@ -1874,7 +1875,11 @@ static NTSTATUS create_view( struct file_view **view_ret, void *base, size_t siz
+  */
+ static DWORD get_win32_prot( BYTE vprot, unsigned int map_prot )
+ {
+-    DWORD ret = VIRTUAL_Win32Flags[vprot & 0x0f];
++    DWORD ret;
++
++    if ((vprot & (VPROT_COPIED | VPROT_WRITECOPY)) == (VPROT_COPIED | VPROT_WRITECOPY))
++        vprot = (vprot & ~VPROT_WRITECOPY) | VPROT_WRITE;
++    ret = VIRTUAL_Win32Flags[vprot & 0x0f];
+     if (vprot & VPROT_GUARD) ret |= PAGE_GUARD;
+     if (map_prot & SEC_NOCACHE) ret |= PAGE_NOCACHE;
+     return ret;
+@@ -5539,6 +5544,15 @@ NTSTATUS WINAPI NtProtectVirtualMemory( HANDLE process, PVOID *addr_ptr, SIZE_T
+         {
+             old = get_win32_prot( vprot, view->protect );
+             status = set_protection( view, base, size, new_prot );
++
++            if (simulate_writecopy && status == STATUS_SUCCESS &&
++                (old == PAGE_WRITECOPY || old == PAGE_EXECUTE_WRITECOPY))
++            {
++                TRACE( "Setting VPROT_COPIED.\n" );
++                set_page_vprot_bits( base, size, VPROT_COPIED, 0 );
++                vprot |= VPROT_COPIED;
++                old = get_win32_prot( vprot, view->protect );
++            }
+         }
+         else status = STATUS_NOT_COMMITTED;
+     }
